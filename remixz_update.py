@@ -253,25 +253,40 @@ def _check_one_repo(
         return info
 
     # 2) version.json en rama
+    # Preferir content base64 de la API (evita caché vieja de raw.githubusercontent.com)
     for br in (branch, *DEFAULT_BRANCHES):
         code, content = _http_get_json(f"{api}/contents/version.json?ref={br}")
-        if code == 200 and isinstance(content, dict) and content.get("download_url"):
+        if code != 200 or not isinstance(content, dict):
+            continue
+        ver_data = None
+        # 2a) decode base64 embebido
+        try:
+            if content.get("encoding") == "base64" and content.get("content"):
+                import base64
+                raw = base64.b64decode(content["content"]).decode("utf-8", errors="replace")
+                ver_data = json.loads(raw)
+        except Exception:
+            ver_data = None
+        # 2b) fallback download_url
+        if not isinstance(ver_data, dict) and content.get("download_url"):
             dcode, ver_data = _http_get_json(content["download_url"])
-            if dcode == 200 and isinstance(ver_data, dict):
-                remote_ver = str(ver_data.get("version", "")).lstrip("vV")
-                info.ready = True
-                info.source = "version.json"
-                info.remote_version = remote_ver
-                info.download_url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
-                info.release_notes = str(ver_data.get("notes") or "")
-                info.available = _is_newer(remote_ver, local_ver)
-                info.message = (
-                    f"Nueva versión {remote_ver} en {repo}/{br} (local {local_ver})."
-                    if info.available
-                    else f"Al día con {repo} (v{local_ver})."
-                )
-                info.raw = ver_data
-                return info
+            if dcode != 200 or not isinstance(ver_data, dict):
+                ver_data = None
+        if isinstance(ver_data, dict):
+            remote_ver = str(ver_data.get("version", "")).lstrip("vV")
+            info.ready = True
+            info.source = "version.json"
+            info.remote_version = remote_ver
+            info.download_url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
+            info.release_notes = str(ver_data.get("notes") or "")
+            info.available = _is_newer(remote_ver, local_ver)
+            info.message = (
+                f"Nueva versión {remote_ver} en {repo}/{br} (local {local_ver})."
+                if info.available
+                else f"Al día con {repo} (v{local_ver})."
+            )
+            info.raw = ver_data
+            return info
 
     # 3) Último commit
     for br in (branch, *DEFAULT_BRANCHES):
