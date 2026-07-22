@@ -1,15 +1,16 @@
 {
-    "app": "RemixZ Cleaner X",
-    "version": "3.2.8",
-    "build": "2026-07-22",
-    "channel": "stable",
-    "repo": "alikhan847547-sketch/remixz",
-    "repo_url": "https://github.com/alikhan847547-sketch/remixz",
-    "repo_secondary": "SMPROJECT115/remixz",
-    "repos": [
-        "alikhan847547-sketch/remixz",
-        "SMPROJECT115/remixz"
-    ],
-    "update_branch": "main",
-    "notes": "3.2.8: DJ Tools UI bloqueada/proximamente para usuario; password 5312 solo prueba. Reinicio auto + hide UI boot."
+  "notes": "v3.3.0 — Barra progreso gradient + ClubRemix DJ Tools desbloqueado (preview, mes/año, mutagen fallback, progreso en vivo).",
+  "channel": "stable",
+  "repo_url": "https://github.com/alikhan847547-sketch/remixz",
+  "repo": "alikhan847547-sketch/remixz",
+  "update_branch": "main",
+  "version": "3.3.0",
+  "repos": [
+    "alikhan847547-sketch/remixz",
+    "SMPROJECT115/remixz"
+  ],
+  "repo_secondary": "SMPROJECT115/remixz",
+  "app": "RemixZ Cleaner X",
+  "updates_enabled": true,
+  "build": "2026-07-22"
 }

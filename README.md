@@ -2,11 +2,11 @@
 
 Limpieza de nombres y metadatos (RemixZ / Tio Dealer / WhatsApp).
 
-**v3.1.6**
-- UI profesional + progress bars rounded con degradado
-- Fix ventana invisible al arrancar
-- **ClubRemix DJ Tools** → bloqueado (*Próximamente*)
-- **Updates desde DOS repositorios** (mirror)
+**v3.3.0**
+- Barra de progreso gradient (limpieza + DJ Tools + updates)
+- **ClubRemix DJ Tools** desbloqueado: renombrar membresía, TITLE, preview
+- Mes/año elegibles, subcarpetas, mutagen fallback sin ffmpeg
+- Updates desde DOS repositorios (mirror)
 
 ## Repos (ambos se mantienen)
 
