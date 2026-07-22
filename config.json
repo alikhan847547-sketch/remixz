@@ -1,0 +1,17 @@
+{
+    "tema": "classic",
+    "hilos": 16,
+    "confirmar_salida": true,
+    "analizar_antes_limpiar": true,
+    "patrones": [
+        "\\[?\\s*Remixz\\s*By\\s*Tio\\s*Dealer\\s*\\]?",
+        "#?\\s*TRACK\\s*WhatsApp\\s*755\\s*114\\s*6718",
+        "#?\\s*WhatsApp\\s*755\\s*114\\s*6718",
+        "#?\\s*album\\s*Remixz\\s*Membresia\\s*Abril\\s*2k26",
+        "#?\\s*compositor\\s*Tio\\s*Dealer",
+        "Tio\\s*Dealer",
+        "DISCNUMBER",
+        "TRACK",
+        "\\s*Todo\\s*Para\\s*DJ"
+    ]
+}

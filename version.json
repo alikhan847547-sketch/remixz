@@ -1,0 +1,10 @@
+{
+    "app": "RemixZ Cleaner X",
+    "version": "3.1.6",
+    "build": "2026-07-22",
+    "channel": "stable",
+    "repo": "alikhan847547-sketch/remixz",
+    "repo_url": "https://github.com/alikhan847547-sketch/remixz",
+    "update_branch": "main",
+    "notes": "UI profesional, progress gradient, fix ventana, DJ Tools ClubRemix proximamente (bloqueado). Repo: alikhan847547-sketch/remixz"
+}

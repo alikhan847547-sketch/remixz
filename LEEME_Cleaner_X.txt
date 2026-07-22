@@ -1,0 +1,25 @@
+RemixZ Cleaner X v3.1.6
+=======================
+
+Qué hace
+--------
+Limpia nombres y metadatos RemixZ / Tio Dealer / WhatsApp
+en audio, video e imagen.
+
+UI profesional + barras de progreso rounded con degradado.
+Arranque fiable (ventana visible).
+
+ClubRemix DJ Tools
+------------------
+El botón «Abrir DJ Tools» está BLOQUEADO en esta versión
+(mensaje «ClubRemix · Próximamente»).
+Se habilitará en una actualización futura.
+
+Cómo ejecutar
+-------------
+1. Doble clic en:  ejecutar_Cleaner_X.vbs
+2. O: pythonw RemixZ_Cleaner_X_App.py
+
+Repo
+----
+https://github.com/alikhan847547-sketch/remixz
