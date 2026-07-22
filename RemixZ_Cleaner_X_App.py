@@ -1213,7 +1213,7 @@ class MasterPasswordDialog(tk.Toplevel):
         head.pack_propagate(False)
         tk.Frame(head, bg=ACCENT, width=3).pack(side="left", fill="y")
         tk.Label(
-            head, text="  🔒  Acceso restringido",
+            head, text="  🔒  ClubRemix · Bloqueado",
             font=("Segoe UI Semibold", 12), fg=FG, bg=FLUENT["header"],
         ).pack(side="left", padx=10)
 
@@ -1226,7 +1226,7 @@ class MasterPasswordDialog(tk.Toplevel):
         ).pack(anchor="w", pady=(0, 12))
 
         tk.Label(
-            body, text="PASSWORD MAESTRO",
+            body, text="CÓDIGO DE ACCESO (si aplica)",
             font=("Segoe UI", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["card"],
         ).pack(anchor="w")
         self.entry = tk.Entry(
@@ -1250,10 +1250,10 @@ class MasterPasswordDialog(tk.Toplevel):
         btns = tk.Frame(body, bg=FLUENT["card"])
         btns.pack(fill="x", pady=(14, 0))
         fluent = FluentUI(dict(FLUENT), root=self)
-        fluent.button(btns, "  Cancelar  ", self._cancel, kind="standard", width=12).pack(
+        fluent.button(btns, "  Cerrar  ", self._cancel, kind="standard", width=12).pack(
             side="right", padx=(8, 0)
         )
-        fluent.button(btns, "  Entrar  ", self._ok, kind="accent", width=12).pack(side="right")
+        fluent.button(btns, "  Continuar  ", self._ok, kind="accent", width=12).pack(side="right")
 
         self.entry.bind("<Return>", lambda _e: self._ok())
         self.entry.bind("<Escape>", lambda _e: self._cancel())
@@ -2031,10 +2031,11 @@ class CleanerXApp(tk.Tk):
         )
         self.path_lbl.pack(fill="x", padx=12, pady=(0, 8))
 
-        # Card DJ Tools (password maestro para pruebas)
+        # Card DJ Tools — apariencia BLOQUEADA para el usuario (próximamente)
+        # Acceso de prueba solo con password maestro (5312), no se publicita en UI.
         _, dj_action = self._card(
             body, "ClubRemix DJ Tools", ACCENT,
-            subtitle="Acceso con password maestro · modo prueba.",
+            subtitle="Función ClubRemix · bloqueada para usuarios (próximamente).",
         )
         dj_row = tk.Frame(dj_action, bg=FLUENT["card"])
         dj_row.pack(fill="x")
@@ -2043,19 +2044,19 @@ class CleanerXApp(tk.Tk):
         )
         self.dj_btn.pack(side="left")
         self.dj_btn.configure(font=("Segoe UI Semibold", 11), pady=12, padx=18)
-        lock = tk.Frame(
+        soon = tk.Frame(
             dj_row, bg=FLUENT["input"],
             highlightthickness=1, highlightbackground=FLUENT["border"],
         )
-        lock.pack(side="left", padx=(14, 0))
+        soon.pack(side="left", padx=(14, 0))
         tk.Label(
-            lock, text="  🔒 PASSWORD  ",
+            soon, text="  🔒 PRÓXIMAMENTE  ",
             font=("Segoe UI Semibold", 8),
             fg=ACCENT_ORANGE, bg=FLUENT["input"],
         ).pack(padx=4, pady=8)
         tk.Label(
             dj_row,
-            text="Requiere password maestro para pruebas",
+            text="Uso ClubRemix bloqueado en esta versión",
             font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"],
             anchor="w",
         ).pack(side="left", fill="x", expand=True, padx=(12, 0))
@@ -2359,30 +2360,33 @@ class CleanerXApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     # ── ClubRemix DJ Tools ─────────────────────────────────────────────────
-    MASTER_PASSWORD = "5312"  # pruebas internas ClubRemix
+    MASTER_PASSWORD = "5312"  # solo pruebas internas (no mostrar al usuario)
 
     def _open_djtools(self):
         """
-        ClubRemix DJ Tools — requiere password maestro (5312) para pruebas.
-        Sin password correcto no se abre el panel.
+        Para el usuario final: aparece BLOQUEADO / PRÓXIMAMENTE.
+        Acceso de prueba: password maestro 5312 (diálogo sin publicitar la clave).
         """
         def after_pw(ok: bool):
             if not ok:
                 try:
-                    self._append_log("DJ Tools: password incorrecto o cancelado.")
+                    self._append_log("DJ Tools: bloqueado (próximamente) / sin acceso.")
                 except Exception:
                     pass
+                # Mensaje de usuario final — no mencionar password ni modo prueba
                 self.notify(
-                    "ClubRemix · Acceso denegado",
-                    "Password maestro incorrecto o cancelado.\n\n"
-                    "DJ Tools permanece bloqueado.\n"
-                    "Contacta al administrador para el acceso de prueba.",
-                    kind="warning",
-                    buttons=[("OK", "ok")],
+                    "ClubRemix · Próximamente",
+                    "ClubRemix DJ Tools aún no está disponible en esta versión.\n\n"
+                    "• Renombrar con membresía\n"
+                    "• Actualizar TITLE (ffmpeg)\n\n"
+                    "Esta función se habilitará en una próxima actualización.\n"
+                    "Por ahora usa «Limpiar carpeta» con normalidad.",
+                    kind="info",
+                    buttons=[("Entendido", "ok")],
                 )
                 return
             try:
-                self._append_log("DJ Tools: acceso autorizado (password maestro).")
+                self._append_log("DJ Tools: acceso de prueba autorizado.")
             except Exception:
                 pass
             if getattr(self, "_dj_win", None) is not None:
@@ -2395,10 +2399,14 @@ class CleanerXApp(tk.Tk):
                     pass
             self._dj_win = DJToolsWindow(self)
 
+        # Diálogo interno: si cancelan o fallan, ven el mensaje de bloqueado
         MasterPasswordDialog(
             self,
-            title="ClubRemix · Password maestro",
-            message="DJ Tools está en modo prueba.\nIngresa el password maestro para continuar:",
+            title="ClubRemix · Próximamente",
+            message=(
+                "Esta función está bloqueada para usuarios.\n\n"
+                "Si tienes autorización de prueba, ingresa el código de acceso:"
+            ),
             expected=self.MASTER_PASSWORD,
             on_result=after_pw,
         )
