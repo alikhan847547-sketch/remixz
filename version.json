@@ -11,6 +11,6 @@
         "SMPROJECT115/remixz"
     ],
     "update_branch": "main",
-    "notes": "3.2.6: UI profesional, progress gradient rounded, fix ventana, DJ Tools ClubRemix proximamente, dual-repo updates.",
-    "release_id": "20260722-326"
+    "notes": "3.2.6: UI profesional, progress gradient, DJ Tools ClubRemix proximamente, dual-repo.",
+    "release_id": "force-326-api"
 }
