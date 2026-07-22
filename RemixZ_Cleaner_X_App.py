@@ -660,38 +660,69 @@ class TkCleanerUI:
 
 
 def restart_application() -> None:
-    """Cierra la app actual y la vuelve a lanzar (script o EXE)."""
+    """
+    Cierra la app actual y la vuelve a lanzar (script, VBS o EXE).
+    Tras un update SIEMPRE se usa esto — no dejar la UI vieja abierta.
+    """
+    cwd = str(APP_DIR)
+    cmd: list[str] = []
     try:
         if getattr(sys, "frozen", False):
-            # Onedir EXE: relanzar el mismo ejecutable
             cmd = [sys.executable]
-            cwd = str(APP_DIR)
         else:
+            # Preferir launcher VBS (sin consola) → pythonw script
+            vbs = APP_DIR / "ejecutar_Cleaner_X.vbs"
+            bat = APP_DIR / "ejecutar_Cleaner_X.bat"
             script = APP_DIR / "RemixZ_Cleaner_X_App.py"
-            # Preferir pythonw en Windows
-            exe = sys.executable
-            if os.name == "nt" and exe.lower().endswith("python.exe"):
-                pyw = exe[:-10] + "pythonw.exe"
-                if Path(pyw).exists():
-                    exe = pyw
-            cmd = [exe, str(script)]
-            cwd = str(APP_DIR)
+            if os.name == "nt" and vbs.exists():
+                cmd = ["wscript.exe", str(vbs)]
+            elif os.name == "nt" and bat.exists():
+                cmd = ["cmd.exe", "/c", str(bat)]
+            else:
+                exe = sys.executable
+                if os.name == "nt" and exe.lower().endswith("python.exe"):
+                    pyw = exe[:-10] + "pythonw.exe"
+                    if Path(pyw).exists():
+                        exe = pyw
+                cmd = [exe, str(script)]
+
         flags = 0
         if os.name == "nt":
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            flags = (
+                getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             )
-        subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            close_fds=True,
-            creationflags=flags,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
+        # Pequeña espera en proceso hijo: dar tiempo a liberar .py/.pyd
+        if os.name == "nt":
+            # cmd /c timeout then start — más fiable tras overwrite de update
+            inner = subprocess.list2cmdline(cmd)
+            wrapper = f'ping -n 2 127.0.0.1 >nul & {inner}'
+            subprocess.Popen(
+                ["cmd.exe", "/c", wrapper],
+                cwd=cwd,
+                close_fds=True,
+                creationflags=flags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                close_fds=True,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        _log_boot(f"restart_application: launched {cmd!r}")
+    except Exception as exc:
+        try:
+            _log_boot(f"restart_application FAIL: {exc}")
+        except Exception:
+            pass
     try:
         os._exit(0)
     except Exception:
@@ -1138,6 +1169,134 @@ class FluentNotify(tk.Toplevel):
                 cb(key)
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Password maestro (pruebas ClubRemix)
+# ---------------------------------------------------------------------------
+class MasterPasswordDialog(tk.Toplevel):
+    """Pide password maestro antes de abrir DJ Tools."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        title: str,
+        message: str,
+        expected: str,
+        on_result=None,
+    ):
+        super().__init__(parent)
+        self.on_result = on_result
+        self.expected = str(expected)
+        self.result_ok = False
+        self.title(title)
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.transient(parent)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+        try:
+            self.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+
+        outer = tk.Frame(self, bg=FLUENT["border"])
+        outer.pack(fill="both", expand=True)
+        root = tk.Frame(outer, bg=FLUENT["card"])
+        root.pack(fill="both", expand=True, padx=1, pady=1)
+
+        head = tk.Frame(root, bg=FLUENT["header"], height=52)
+        head.pack(fill="x")
+        head.pack_propagate(False)
+        tk.Frame(head, bg=ACCENT, width=3).pack(side="left", fill="y")
+        tk.Label(
+            head, text="  🔒  Acceso restringido",
+            font=("Segoe UI Semibold", 12), fg=FG, bg=FLUENT["header"],
+        ).pack(side="left", padx=10)
+
+        body = tk.Frame(root, bg=FLUENT["card"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+        tk.Label(
+            body, text=message,
+            font=("Segoe UI", 10), fg=FG_MUTED, bg=FLUENT["card"],
+            justify="left", wraplength=360,
+        ).pack(anchor="w", pady=(0, 12))
+
+        tk.Label(
+            body, text="PASSWORD MAESTRO",
+            font=("Segoe UI", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["card"],
+        ).pack(anchor="w")
+        self.entry = tk.Entry(
+            body,
+            font=("Segoe UI", 12),
+            show="●",
+            bg=FLUENT["input"], fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=FLUENT["border"],
+            highlightcolor=ACCENT,
+        )
+        self.entry.pack(fill="x", ipady=8, pady=(4, 6))
+        self.err_lbl = tk.Label(
+            body, text="", font=("Segoe UI", 9),
+            fg="#ff6b7a", bg=FLUENT["card"],
+        )
+        self.err_lbl.pack(anchor="w")
+
+        btns = tk.Frame(body, bg=FLUENT["card"])
+        btns.pack(fill="x", pady=(14, 0))
+        fluent = FluentUI(dict(FLUENT), root=self)
+        fluent.button(btns, "  Cancelar  ", self._cancel, kind="standard", width=12).pack(
+            side="right", padx=(8, 0)
+        )
+        fluent.button(btns, "  Entrar  ", self._ok, kind="accent", width=12).pack(side="right")
+
+        self.entry.bind("<Return>", lambda _e: self._ok())
+        self.entry.bind("<Escape>", lambda _e: self._cancel())
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        self.update_idletasks()
+        w, h = 420, 260
+        try:
+            px = parent.winfo_rootx() + max(0, (parent.winfo_width() - w) // 2)
+            py = parent.winfo_rooty() + max(0, (parent.winfo_height() - h) // 2)
+            self.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            self.geometry(f"{w}x{h}")
+        self.after(80, self.entry.focus_force)
+
+    def _finish(self, ok: bool):
+        self.result_ok = ok
+        cb = self.on_result
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        if cb:
+            try:
+                cb(ok)
+            except Exception:
+                pass
+
+    def _ok(self):
+        val = (self.entry.get() or "").strip()
+        if val == self.expected:
+            self._finish(True)
+        else:
+            self.err_lbl.configure(text="Password incorrecto. Intenta de nuevo.")
+            self.entry.delete(0, "end")
+            self.entry.focus_force()
+
+    def _cancel(self):
+        self._finish(False)
 
 
 # ---------------------------------------------------------------------------
@@ -1872,10 +2031,10 @@ class CleanerXApp(tk.Tk):
         )
         self.path_lbl.pack(fill="x", padx=12, pady=(0, 8))
 
-        # Card DJ Tools (botón aparte — bloqueado ClubRemix / próximamente)
+        # Card DJ Tools (password maestro para pruebas)
         _, dj_action = self._card(
             body, "ClubRemix DJ Tools", ACCENT,
-            subtitle="Función ClubRemix · disponible próximamente.",
+            subtitle="Acceso con password maestro · modo prueba.",
         )
         dj_row = tk.Frame(dj_action, bg=FLUENT["card"])
         dj_row.pack(fill="x")
@@ -1884,20 +2043,19 @@ class CleanerXApp(tk.Tk):
         )
         self.dj_btn.pack(side="left")
         self.dj_btn.configure(font=("Segoe UI Semibold", 11), pady=12, padx=18)
-        # Badge PRÓXIMAMENTE
-        soon = tk.Frame(
+        lock = tk.Frame(
             dj_row, bg=FLUENT["input"],
             highlightthickness=1, highlightbackground=FLUENT["border"],
         )
-        soon.pack(side="left", padx=(14, 0))
+        lock.pack(side="left", padx=(14, 0))
         tk.Label(
-            soon, text="  PRÓXIMAMENTE  ",
+            lock, text="  🔒 PASSWORD  ",
             font=("Segoe UI Semibold", 8),
             fg=ACCENT_ORANGE, bg=FLUENT["input"],
         ).pack(padx=4, pady=8)
         tk.Label(
             dj_row,
-            text="Uso ClubRemix bloqueado en esta build",
+            text="Requiere password maestro para pruebas",
             font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"],
             anchor="w",
         ).pack(side="left", fill="x", expand=True, padx=(12, 0))
@@ -2053,26 +2211,43 @@ class CleanerXApp(tk.Tk):
         self._show_main()
 
     def _restart_after_update(self):
-        """Relanza el aplicativo sin pedir confirmación (post-update)."""
+        """Relanza el aplicativo sin pedir confirmación y SIN abrir el panel principal."""
         try:
+            # No mostrar interfaz de trabajo — solo mensaje de reinicio
+            self._welcome_ready = False
+            try:
+                self.main_frame.pack_forget()
+            except Exception:
+                pass
+            try:
+                self.welcome_frame.pack(fill="both", expand=True, padx=36, pady=20)
+            except Exception:
+                pass
             self.footer_lbl.configure(text=f"v{VERSION} · reiniciando…")
             self.welcome_status.configure(
-                text="Update listo — reiniciando automáticamente…",
+                text="Update aplicado. Reiniciando automáticamente…\n"
+                     "No cierres esta ventana.",
                 fg=ACCENT_GREEN,
             )
         except Exception:
             pass
-        # Breve pausa para que se vea el mensaje y se liberen handles de archivos
-        self.after(350, restart_application)
+        # Esperar a que se cierren handles del update y relanzar
+        self.after(900, restart_application)
 
     def _apply_update_then_start(self):
-        """Al pulsar Aplicar: abre ventana de progreso y al terminar reinicia solo."""
+        """Al pulsar Aplicar: progreso → reinicio automático (sin UI principal)."""
         info = self._update_info
         if not info or not info.download_url:
             self._start_after_ok()
             return
 
         self._busy = True
+        # Asegurar que solo se ve bienvenida / progreso, no el panel Cleaner
+        try:
+            self.main_frame.pack_forget()
+            self._welcome_ready = False
+        except Exception:
+            pass
         remote = info.remote_version or (info.remote_sha[:7] if info.remote_sha else "?")
         try:
             self.welcome_status.configure(
@@ -2088,7 +2263,9 @@ class CleanerXApp(tk.Tk):
         self._update_win = win
         win.set_progress(1, "Conectando con el repositorio…")
         win._log_line(f"Origen: {info.source or 'GitHub'}")
+        win._log_line(f"Repo: {getattr(info, 'repo', '') or 'GitHub'}")
         win._log_line(f"URL: {(info.download_url or '')[:70]}…")
+        win._log_line("Al terminar: reinicio automático (sin abrir panel).")
 
         def on_progress(pct: int, msg: str):
             def _ui():
@@ -2125,7 +2302,7 @@ class CleanerXApp(tk.Tk):
                 if ok:
                     try:
                         self.welcome_status.configure(
-                            text="Update aplicado — reiniciando…",
+                            text="Update aplicado — reiniciando automáticamente…",
                             fg=ACCENT_GREEN,
                         )
                         self.footer_lbl.configure(text=f"v{VERSION} · reiniciando…")
@@ -2133,17 +2310,30 @@ class CleanerXApp(tk.Tk):
                         pass
 
                     def after_auto_restart():
+                        # Forzar reinicio; no pasar por _start_after_ok / panel principal
                         self._restart_after_update()
 
                     try:
                         win.finish_ok(
-                            message,
+                            message + "\nReinicio automático…",
                             on_restart=after_auto_restart,
                             auto_restart=True,
-                            auto_delay_ms=2000,
+                            auto_delay_ms=1200,
                         )
                     except Exception:
-                        self.after(500, restart_application)
+                        self.after(400, restart_application)
+                    # Failsafe: si finish_ok no dispara, reiniciar igual
+                    def _failsafe_restart():
+                        try:
+                            if self.winfo_exists():
+                                restart_application()
+                        except Exception:
+                            try:
+                                restart_application()
+                            except Exception:
+                                pass
+
+                    self.after(4500, _failsafe_restart)
                 else:
                     try:
                         self.welcome_status.configure(text=message, fg="#ff6666")
@@ -2169,35 +2359,49 @@ class CleanerXApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     # ── ClubRemix DJ Tools ─────────────────────────────────────────────────
+    MASTER_PASSWORD = "5312"  # pruebas internas ClubRemix
+
     def _open_djtools(self):
         """
-        ClubRemix DJ Tools — bloqueado temporalmente (próximamente).
-        La lógica y la ventana siguen en el código para activarlas después.
+        ClubRemix DJ Tools — requiere password maestro (5312) para pruebas.
+        Sin password correcto no se abre el panel.
         """
-        self.notify(
-            "ClubRemix · Próximamente",
-            "ClubRemix DJ Tools aún no está disponible en esta versión.\n\n"
-            "• Renombrar con membresía\n"
-            "• Actualizar TITLE (ffmpeg)\n\n"
-            "Esta función se habilitará en una próxima actualización.\n"
-            "Por ahora usa «Limpiar carpeta» con normalidad.",
-            kind="info",
-            buttons=[("Entendido", "ok")],
+        def after_pw(ok: bool):
+            if not ok:
+                try:
+                    self._append_log("DJ Tools: password incorrecto o cancelado.")
+                except Exception:
+                    pass
+                self.notify(
+                    "ClubRemix · Acceso denegado",
+                    "Password maestro incorrecto o cancelado.\n\n"
+                    "DJ Tools permanece bloqueado.\n"
+                    "Contacta al administrador para el acceso de prueba.",
+                    kind="warning",
+                    buttons=[("OK", "ok")],
+                )
+                return
+            try:
+                self._append_log("DJ Tools: acceso autorizado (password maestro).")
+            except Exception:
+                pass
+            if getattr(self, "_dj_win", None) is not None:
+                try:
+                    if self._dj_win.winfo_exists():
+                        self._dj_win.lift()
+                        self._dj_win.focus_force()
+                        return
+                except Exception:
+                    pass
+            self._dj_win = DJToolsWindow(self)
+
+        MasterPasswordDialog(
+            self,
+            title="ClubRemix · Password maestro",
+            message="DJ Tools está en modo prueba.\nIngresa el password maestro para continuar:",
+            expected=self.MASTER_PASSWORD,
+            on_result=after_pw,
         )
-        try:
-            self._append_log("DJ Tools: acceso ClubRemix bloqueado (próximamente).")
-        except Exception:
-            pass
-        # Para reactivar el panel completo, descomentar:
-        # if getattr(self, "_dj_win", None) is not None:
-        #     try:
-        #         if self._dj_win.winfo_exists():
-        #             self._dj_win.lift()
-        #             self._dj_win.focus_force()
-        #             return
-        #     except Exception:
-        #         pass
-        # self._dj_win = DJToolsWindow(self)
 
     # ── Limpieza ───────────────────────────────────────────────────────────
     def _append_log(self, line: str):
@@ -2322,16 +2526,14 @@ def main():
     _hide_console()
     os.chdir(APP_DIR)
 
-    # App VISIBLE desde el inicio (evita ventanas fantasma / splash que no cierra)
-    app = CleanerXApp(start_hidden=False, dep_report={})
+    # App OCULTA hasta terminar splash/boot — no mostrar panel del programa aún
+    app = CleanerXApp(start_hidden=True, dep_report={})
     try:
-        app.attributes("-alpha", 1.0)
-        app.lift()
-        app.focus_force()
+        app.withdraw()
     except Exception:
         pass
 
-    # Splash opcional encima (Toplevel); si falla, la app ya se ve
+    # Solo splash visible al abrir
     splash = None
     try:
         splash = LoadingSplash(
@@ -2341,10 +2543,18 @@ def main():
             master=app,
         )
         splash.set_status("Preparando Cleaner X…", 8, step=0)
-        app.update_idletasks()
+        try:
+            app.update_idletasks()
+        except Exception:
+            pass
     except Exception as exc:
         _log_boot(f"splash: {exc}")
         splash = None
+        # Sin splash: mostrar solo bienvenida (no panel principal aún)
+        try:
+            app.deiconify()
+        except Exception:
+            pass
 
     dep_report: dict = {}
     boot_error: str | None = None
@@ -2379,13 +2589,19 @@ def main():
                 pass
 
     def finish_boot():
-        """Cierra splash y deja la app al frente (una sola vez)."""
+        """Cierra splash y muestra solo bienvenida (NO el panel Cleaner aún)."""
         if _shown["done"]:
             return
         _shown["done"] = True
         _close_splash()
         try:
-            app.reveal()
+            # Asegurar que el panel principal no se vea hasta OK de bienvenida
+            app._welcome_ready = False
+            try:
+                app.main_frame.pack_forget()
+            except Exception:
+                pass
+            app.reveal()  # deiconify + check updates (sigue en welcome)
         except Exception:
             try:
                 app.deiconify()

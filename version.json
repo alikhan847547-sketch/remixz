@@ -1,6 +1,6 @@
 {
     "app": "RemixZ Cleaner X",
-    "version": "3.2.6",
+    "version": "3.2.7",
     "build": "2026-07-22",
     "channel": "stable",
     "repo": "alikhan847547-sketch/remixz",
@@ -11,6 +11,5 @@
         "SMPROJECT115/remixz"
     ],
     "update_branch": "main",
-    "notes": "3.2.6: UI profesional, progress gradient, DJ Tools ClubRemix proximamente, dual-repo.",
-    "release_id": "force-326-api"
+    "notes": "3.2.7: reinicio auto post-update, UI oculta al boot, DJ Tools con password maestro 5312, dual-repo, fix CDN version."
 }
