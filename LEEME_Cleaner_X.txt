@@ -20,6 +20,9 @@ Cómo ejecutar
 1. Doble clic en:  ejecutar_Cleaner_X.vbs
 2. O: pythonw RemixZ_Cleaner_X_App.py
 
-Repo
+Repos (ambos se mantienen)
 ----
-https://github.com/alikhan847547-sketch/remixz
+Principal:  https://github.com/alikhan847547-sketch/remixz
+Secundario: https://github.com/SMPROJECT115/remixz
+
+El updater consulta los dos y aplica la versión más nueva.

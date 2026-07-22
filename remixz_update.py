@@ -2,14 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 RemixZ Updater — comprueba y aplica updates desde GitHub.
-Repo: https://github.com/alikhan847547-sketch/remixz
 
-Prioridad de detección:
+Se mantienen DOS repositorios (mirror / respaldo):
+  1) https://github.com/alikhan847547-sketch/remixz   (principal)
+  2) https://github.com/SMPROJECT115/remixz           (secundario)
+
+Prioridad de detección por cada repo:
   1) Releases (tag / assets)
   2) version.json en la rama principal
   3) Último commit SHA (cuando el repo tenga contenido)
 
-No fuerza update si el repositorio está vacío.
+Se elige el update con la versión más nueva entre ambos.
+No fuerza update si los repositorios están vacíos.
 """
 
 from __future__ import annotations
@@ -29,9 +33,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-REPO = "alikhan847547-sketch/remixz"
+# Repos mantenidos en paralelo (orden = prioridad de consulta)
+REPOS: tuple[str, ...] = (
+    "alikhan847547-sketch/remixz",
+    "SMPROJECT115/remixz",
+)
+REPO = REPOS[0]  # principal (compat)
 REPO_URL = f"https://github.com/{REPO}"
-API_BASE = f"https://api.github.com/repos/{REPO}"
+REPO_URLS: tuple[str, ...] = tuple(f"https://github.com/{r}" for r in REPOS)
 DEFAULT_BRANCHES = ("main", "master")
 USER_AGENT = "RemixZ-Updater/1.0 (+https://github.com/alikhan847547-sketch/remixz)"
 
@@ -63,6 +72,8 @@ class UpdateInfo:
     source: str = ""  # release | version.json | commit
     download_url: str = ""
     release_notes: str = ""
+    repo: str = ""  # owner/name del repo que ofrece el update
+    repo_url: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -71,6 +82,31 @@ def _app_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def _repos_from_local(local: dict[str, Any] | None = None) -> list[str]:
+    """Lista de repos a consultar: version.json + defaults (sin duplicados)."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str) -> None:
+        n = (name or "").strip().lstrip("/")
+        if not n or n in seen:
+            return
+        # normalizar URL completa → owner/repo
+        if "github.com/" in n:
+            n = n.split("github.com/", 1)[1].rstrip("/").removesuffix(".git")
+        seen.add(n)
+        ordered.append(n)
+
+    if local:
+        add(str(local.get("repo") or ""))
+        for r in local.get("repos") or []:
+            add(str(r))
+        add(str(local.get("repo_secondary") or ""))
+    for r in REPOS:
+        add(r)
+    return ordered
 
 
 def load_local_version(app_dir: Path | None = None) -> dict[str, Any]:
@@ -82,6 +118,8 @@ def load_local_version(app_dir: Path | None = None) -> dict[str, Any]:
             "version": "3.2.0",
             "build": "",
             "repo": REPO,
+            "repos": list(REPOS),
+            "repo_url": REPO_URL,
             "update_branch": "main",
             "commit_sha": "",
         }
@@ -89,7 +127,7 @@ def load_local_version(app_dir: Path | None = None) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except Exception:
-        return {"version": "0.0.0", "repo": REPO}
+        return {"version": "0.0.0", "repo": REPO, "repos": list(REPOS)}
 
 
 def save_local_version(data: dict[str, Any], app_dir: Path | None = None) -> None:
@@ -170,25 +208,29 @@ def _is_newer(remote: str, local: str) -> bool:
         return remote.strip() != local.strip()
 
 
-def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
-    """Consulta GitHub y devuelve si hay update disponible."""
-    base = app_dir or _app_dir()
-    local = load_local_version(base)
-    local_ver = str(local.get("version", "0.0.0"))
-    local_sha = str(local.get("commit_sha", "") or "")
-    branch = str(local.get("update_branch") or "main")
+def _check_one_repo(
+    repo: str,
+    local_ver: str,
+    local_sha: str,
+    branch: str,
+) -> UpdateInfo:
+    """Consulta un solo repositorio y devuelve UpdateInfo."""
+    api = f"https://api.github.com/repos/{repo}"
+    info = UpdateInfo(
+        local_version=local_ver,
+        local_sha=local_sha,
+        repo=repo,
+        repo_url=f"https://github.com/{repo}",
+    )
 
-    info = UpdateInfo(local_version=local_ver, local_sha=local_sha)
-
-    # Repo existe?
-    code, repo = _http_get_json(API_BASE)
+    code, body = _http_get_json(api)
     if code != 200:
-        info.message = "No se pudo conectar con GitHub o el repo no es público."
-        info.raw = {"http": code, "body": repo}
+        info.message = f"No se pudo conectar con {repo}."
+        info.raw = {"http": code, "body": body, "repo": repo}
         return info
 
     # 1) Releases
-    code, rel = _http_get_json(f"{API_BASE}/releases/latest")
+    code, rel = _http_get_json(f"{api}/releases/latest")
     if code == 200 and isinstance(rel, dict) and rel.get("tag_name"):
         tag = str(rel.get("tag_name", "")).lstrip("vV")
         info.ready = True
@@ -196,7 +238,6 @@ def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
         info.remote_version = tag
         info.release_notes = str(rel.get("body") or rel.get("name") or "")
         info.download_url = str(rel.get("zipball_url") or "")
-        # prefer asset .zip if present
         for asset in rel.get("assets") or []:
             name = str(asset.get("name", "")).lower()
             if name.endswith(".zip"):
@@ -204,18 +245,16 @@ def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
                 break
         info.available = _is_newer(tag, local_ver)
         info.message = (
-            f"Nueva versión {tag} disponible (local {local_ver})."
+            f"Nueva versión {tag} en {repo} (local {local_ver})."
             if info.available
-            else f"Estás al día (v{local_ver})."
+            else f"Al día con {repo} (v{local_ver})."
         )
         info.raw = rel
         return info
 
     # 2) version.json en rama
     for br in (branch, *DEFAULT_BRANCHES):
-        code, content = _http_get_json(
-            f"{API_BASE}/contents/version.json?ref={br}"
-        )
+        code, content = _http_get_json(f"{api}/contents/version.json?ref={br}")
         if code == 200 and isinstance(content, dict) and content.get("download_url"):
             dcode, ver_data = _http_get_json(content["download_url"])
             if dcode == 200 and isinstance(ver_data, dict):
@@ -223,20 +262,20 @@ def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
                 info.ready = True
                 info.source = "version.json"
                 info.remote_version = remote_ver
-                info.download_url = f"https://codeload.github.com/{REPO}/zip/refs/heads/{br}"
+                info.download_url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
                 info.release_notes = str(ver_data.get("notes") or "")
                 info.available = _is_newer(remote_ver, local_ver)
                 info.message = (
-                    f"Nueva versión {remote_ver} en rama {br} (local {local_ver})."
+                    f"Nueva versión {remote_ver} en {repo}/{br} (local {local_ver})."
                     if info.available
-                    else f"Estás al día (v{local_ver})."
+                    else f"Al día con {repo} (v{local_ver})."
                 )
                 info.raw = ver_data
                 return info
 
     # 3) Último commit
     for br in (branch, *DEFAULT_BRANCHES):
-        code, commits = _http_get_json(f"{API_BASE}/commits?sha={br}&per_page=1")
+        code, commits = _http_get_json(f"{api}/commits?sha={br}&per_page=1")
         if code == 200 and isinstance(commits, list) and commits:
             sha = str(commits[0].get("sha", ""))
             msg = ""
@@ -248,35 +287,96 @@ def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
             info.source = "commit"
             info.remote_sha = sha
             info.remote_version = sha[:7] if sha else ""
-            info.download_url = f"https://codeload.github.com/{REPO}/zip/refs/heads/{br}"
+            info.download_url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
             info.release_notes = msg
             if local_sha and sha and local_sha != sha:
                 info.available = True
-                info.message = f"Hay commits nuevos en {br} ({sha[:7]})."
+                info.message = f"Commits nuevos en {repo}/{br} ({sha[:7]})."
             elif not local_sha and sha:
-                # primera sync: avisar pero no forzar si no hay version remota semver
                 info.available = False
                 info.message = (
-                    f"Repo activo en {br} ({sha[:7]}). "
-                    f"Aún no hay release/version.json — se avisará al publicar update."
+                    f"Repo {repo} activo en {br} ({sha[:7]}). "
+                    f"Sin release/version.json todavía."
                 )
             else:
                 info.available = False
-                info.message = f"Estás al día con {br}."
+                info.message = f"Al día con {repo}/{br}."
             info.raw = commits[0] if commits else {}
             return info
         if code == 409:
-            # empty repo
             info.ready = False
-            info.message = (
-                "El repositorio existe pero aún está vacío. "
-                "Cuando suban archivos/releases, el update se activará solo."
-            )
-            info.raw = {"http": 409, "branch": br}
+            info.message = f"El repositorio {repo} existe pero está vacío."
+            info.raw = {"http": 409, "branch": br, "repo": repo}
             return info
 
-    info.message = "No se encontró release ni version.json ni commits en el repo."
+    info.message = f"Sin release/version/commits en {repo}."
     return info
+
+
+def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
+    """
+    Consulta TODOS los repos configurados y devuelve el mejor update.
+    - Si hay versiones disponibles, elige la más nueva.
+    - Si ninguno tiene update, devuelve el primer repo "ready".
+    """
+    base = app_dir or _app_dir()
+    local = load_local_version(base)
+    local_ver = str(local.get("version", "0.0.0"))
+    local_sha = str(local.get("commit_sha", "") or "")
+    branch = str(local.get("update_branch") or "main")
+    repos = _repos_from_local(local)
+
+    candidates: list[UpdateInfo] = []
+    errors: list[str] = []
+
+    for repo in repos:
+        try:
+            info = _check_one_repo(repo, local_ver, local_sha, branch)
+        except Exception as exc:
+            errors.append(f"{repo}: {exc}")
+            continue
+        candidates.append(info)
+
+    if not candidates:
+        return UpdateInfo(
+            local_version=local_ver,
+            local_sha=local_sha,
+            message="No se pudo consultar ningún repositorio."
+            + ((" " + "; ".join(errors)) if errors else ""),
+            repo=repos[0] if repos else REPO,
+            repo_url=REPO_URL,
+        )
+
+    # Preferir updates disponibles con versión más alta
+    available = [c for c in candidates if c.available and c.download_url]
+    if available:
+        best = max(
+            available,
+            key=lambda c: _parse_version(c.remote_version or "0"),
+        )
+        others = [c.repo for c in available if c.repo != best.repo]
+        if others:
+            best.message = (
+                f"{best.message}  ·  (también en: {', '.join(others)})"
+                if best.message
+                else best.message
+            )
+        return best
+
+    # Sin update: devolver el primer ready, o el primero con mensaje útil
+    ready = next((c for c in candidates if c.ready), None)
+    if ready:
+        mirrors = ", ".join(c.repo for c in candidates if c.ready)
+        ready.message = (
+            f"{ready.message}  ·  Repos: {mirrors}"
+            if mirrors and ready.message
+            else ready.message
+        )
+        return ready
+
+    first = candidates[0]
+    first.message = first.message or "Ningún repositorio respondió con contenido."
+    return first
 
 
 def apply_update(
@@ -369,8 +469,12 @@ def apply_update(
         if info.remote_sha:
             local["commit_sha"] = info.remote_sha
         local["last_update"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        local["repo"] = REPO
-        local["repo_url"] = REPO_URL
+        # Mantener ambos repos siempre
+        used_repo = (info.repo or REPO).strip() or REPO
+        local["repo"] = used_repo
+        local["repo_url"] = info.repo_url or f"https://github.com/{used_repo}"
+        local["repos"] = list(dict.fromkeys([used_repo, *REPOS, *list(local.get("repos") or [])]))
+        local["repo_secondary"] = next((r for r in REPOS if r != used_repo), REPOS[-1])
         save_local_version(local, base)
 
         report("Update aplicado.", 100)

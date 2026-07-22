@@ -5,6 +5,11 @@
     "channel": "stable",
     "repo": "alikhan847547-sketch/remixz",
     "repo_url": "https://github.com/alikhan847547-sketch/remixz",
+    "repo_secondary": "SMPROJECT115/remixz",
+    "repos": [
+        "alikhan847547-sketch/remixz",
+        "SMPROJECT115/remixz"
+    ],
     "update_branch": "main",
-    "notes": "UI profesional, progress gradient, fix ventana, DJ Tools ClubRemix proximamente (bloqueado). Repo: alikhan847547-sketch/remixz"
+    "notes": "UI profesional, progress gradient, fix ventana, DJ Tools ClubRemix proximamente. Updates desde ambos repos (mirror)."
 }
