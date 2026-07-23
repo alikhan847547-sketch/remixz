@@ -1,16 +1,26 @@
 {
-  "notes": "v3.3.0 — Barra progreso gradient + ClubRemix DJ Tools desbloqueado (preview, mes/año, mutagen fallback, progreso en vivo).",
-  "channel": "stable",
-  "repo_url": "https://github.com/alikhan847547-sketch/remixz",
-  "repo": "alikhan847547-sketch/remixz",
-  "update_branch": "main",
-  "version": "3.3.0",
-  "repos": [
-    "alikhan847547-sketch/remixz",
-    "SMPROJECT115/remixz"
-  ],
-  "repo_secondary": "SMPROJECT115/remixz",
-  "app": "RemixZ Cleaner X",
-  "updates_enabled": true,
-  "build": "2026-07-22"
+    "notes": "v3.5.0 — Progress bar premium en panel de limpieza, tipografías mejoradas (Segoe UI / Cascadia), CustomTkinter + darkdetect + packaging con auto-instalación. Diseño Fluent intacto.",
+    "channel": "stable",
+    "repo_url": "https://github.com/alikhan847547-sketch/remixz",
+    "repo": "alikhan847547-sketch/remixz",
+    "update_branch": "main",
+    "version": "3.5.0",
+    "repos": [
+        "alikhan847547-sketch/remixz",
+        "SMPROJECT115/remixz"
+    ],
+    "repo_secondary": "SMPROJECT115/remixz",
+    "app": "RemixZ Cleaner X",
+    "updates_enabled": true,
+    "build": "2026-07-23",
+    "last_update": "2026-07-23",
+    "ui": "fluent+customtkinter",
+    "dependencies": [
+        "mutagen",
+        "colorama",
+        "psutil",
+        "customtkinter",
+        "darkdetect",
+        "packaging"
+    ]
 }

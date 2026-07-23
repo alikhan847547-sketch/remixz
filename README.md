@@ -1,22 +1,43 @@
-# RemixZ Cleaner X
+# RemixZ Cleaner X v3.5.6
 
-Limpieza de nombres y metadatos (RemixZ / Tio Dealer / WhatsApp).
+Paquete unificado (incluye todo lo de la línea 3.3).
 
-**v3.3.0**
-- Barra de progreso gradient (limpieza + DJ Tools + updates)
-- **ClubRemix DJ Tools** desbloqueado: renombrar membresía, TITLE, preview
-- Mes/año elegibles, subcarpetas, mutagen fallback sin ffmpeg
-- Updates desde DOS repositorios (mirror)
+## Incluye
 
-## Repos (ambos se mantienen)
+- Limpieza de nombres y metadatos (RemixZ / Tio Dealer / WhatsApp)
+- Barra de progreso gradient
+- **ClubRemix DJ Tools** (renombrar membresía, TITLE, preview)
+- Updater integrado (sin `UPDATE.exe`):
+  - Configura repos al arrancar
+  - Detecta updates vía `raw.githubusercontent.com` (+ API fallback)
+  - **Anti-downgrade**: no aplica releases más viejos que la local
+  - Descarga automática si el remoto es más nuevo
+
+## Repos (mirror)
 
 | Rol | URL |
 |-----|-----|
 | Principal | https://github.com/alikhan847547-sketch/remixz |
 | Secundario | https://github.com/SMPROJECT115/remixz |
 
-El updater consulta ambos y toma la versión más nueva.
+## Ejecutar en local
 
 ```bat
-ejecutar_Cleaner_X.vbs
+python -u RemixZ_Cleaner_X_App.py
 ```
+
+O doble clic en `RemixZ_Cleaner_X.exe` (build portable).
+
+## Probar update local
+
+1. Baja `version` en `version.json` a p.ej. `3.1.5`
+2. Arranca la app → debe bajar solo el paquete más nuevo del repo
+3. Con `3.5.6` y repo en `3.3.0` → **no** baja (anti-retroceso)
+
+## Publicar (cuando esté OK en local)
+
+```bat
+powershell -ExecutionPolicy Bypass -File .\push_to_github.ps1
+```
+
+(Requiere `GITHUB_TOKEN` con acceso a ambos repos.)

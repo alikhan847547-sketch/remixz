@@ -1,5 +1,7 @@
-# RemixZ Cleaner X — dependencias mínimas
-# Se instalan automáticamente al iniciar si faltan.
+# RemixZ Cleaner X — se instalan solas al iniciar si faltan
 mutagen>=1.47.0
 colorama>=0.4.6
 psutil>=5.9.0
+customtkinter>=5.2.0
+darkdetect>=0.8.0
+packaging>=23.0

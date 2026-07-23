@@ -22,7 +22,6 @@ import sys
 import time
 import threading
 import traceback
-from datetime import datetime
 from pathlib import Path
 
 
@@ -123,6 +122,10 @@ REQUIRED_PACKAGES: list[tuple[str, str, str]] = [
     ("mutagen", "mutagen", "Metadatos audio/video"),
     ("colorama", "colorama", "Colores consola (motor)"),
     ("psutil", "psutil", "Uso de CPU/hilos"),
+    # UI: CustomTkinter + deps (se instalan solas si faltan)
+    ("customtkinter", "customtkinter", "Widgets modernos (diseño Fluent)"),
+    ("darkdetect", "darkdetect", "Detección tema SO (CustomTkinter)"),
+    ("packaging", "packaging", "Versionado de paquetes (CustomTkinter)"),
 ]
 
 
@@ -431,13 +434,23 @@ def ensure_packages(status_cb=None, progress_cb=None) -> dict:
     final["failed"] = names  # lo que siga faltando
     final["ok"] = len(final["missing"]) == 0
 
-    if final["ok"]:
-        status("Dependencias listas: mutagen · colorama · psutil")
-    elif final["missing"]:
-        left = ", ".join(m[0] for m in final["missing"])
-        status(f"Aún faltan: {left}")
-        # no bloquear: el motor tiene fallbacks, pero reportamos mal
+    # Paquetes de motor (bloqueantes) vs UI opcional
+    optional_ui = {"customtkinter", "darkdetect", "packaging"}
+    hard_missing = [m for m in final["missing"] if m[0] not in optional_ui]
+    soft_missing = [m for m in final["missing"] if m[0] in optional_ui]
+
+    if not hard_missing and not soft_missing:
+        final["ok"] = True
+        status("Dependencias listas: mutagen · colorama · psutil · customtkinter")
+    elif not hard_missing:
+        # Solo faltan opcionales de UI → arrancar igual
+        final["ok"] = True
+        left = ", ".join(m[0] for m in soft_missing)
+        status(f"UI opcional pendiente: {left} (Fluent tk puro)")
+    else:
         final["ok"] = False
+        left = ", ".join(m[0] for m in hard_missing)
+        status(f"Aún faltan: {left}")
     progress(100)
     return final
 
@@ -449,21 +462,31 @@ import tkinter as tk
 from tkinter import filedialog, ttk, scrolledtext
 
 from fluent_ui import (
-    FLUENT, FluentUI, LoadingSplash, RoundedGradientProgress,
-    apply_fluent_style, fade_in_window,
+    FLUENT,
+    FONTS,
+    FluentUI,
+    LoadingSplash,
+    RoundedGradientProgress,
+    apply_ctk_theme,
+    apply_fluent_style,
+    ctk_available,
+    ensure_ctk_loaded,
+    fade_in_window,
+    font_or_fallback,
 )
+
+# CustomTkinter con la misma paleta (si está instalado); si no, tk puro
+try:
+    apply_ctk_theme(dict(FLUENT))
+except Exception:
+    pass
 import remixz_update
 import remixz_djtools
-
-# Offline builds: no auto-update check (set False to re-enable)
-DISABLE_UPDATES = False
 
 _local_ver = remixz_update.load_local_version(APP_DIR)
 VERSION = str(_local_ver.get("version", "3.2.0"))
 APP_TITLE = f"RemixZ Cleaner X v{VERSION}"
-REPO_URL = str(_local_ver.get("repo_url") or "https://github.com/SMPROJECT115/remixz")
-# Acceso maestro DJ Tools (legacy); en v3.2 el panel abre libre
-MASTER_PASSWORD = "5312"
+REPO_URL = str(_local_ver.get("repo_url") or "https://github.com/alikhan847547-sketch/remixz")
 
 BG = FLUENT["bg"]
 BG_INPUT = FLUENT["input"]
@@ -630,13 +653,22 @@ class TkCleanerUI:
 
     def progress_start(self, total, hilos):
         self.app.call_ui(self.log_fn, f"Iniciando: {total} archivos ({hilos} hilos)")
-        self.app.call_ui(self.progress_fn, 0)
-        self.app.call_ui(self.status_fn, "Limpiando…")
+        self.app.call_ui(
+            self.progress_fn, 0,
+            current=0, total=total, phase="Iniciando limpieza…", detail_pct=0,
+        )
+        self.app.call_ui(self.status_fn, f"Limpiando con {hilos} hilos…")
 
     def progress_update(self, actual, total, nombre, tiempo_inicio):
         pct = int(actual / total * 100) if total else 0
-        self.app.call_ui(self.progress_fn, pct)
-        self.app.call_ui(self.status_fn, f"{actual}/{total}: {nombre[:48]}")
+        self.app.call_ui(
+            self.progress_fn, pct,
+            current=actual, total=total,
+            phase="Limpiando archivos",
+            detail_pct=pct,
+        )
+        short = (nombre or "")[:56]
+        self.app.call_ui(self.status_fn, f"{actual}/{total}  ·  {short}")
 
     def log_file(self, nombre, acciones):
         txt = ", ".join(acciones) if acciones else "OK"
@@ -646,7 +678,11 @@ class TkCleanerUI:
         self.app.call_ui(self.log_fn, f"Error: {nombre}")
 
     def report_final(self, total, corregidos, errores, tiempo_total):
-        self.app.call_ui(self.progress_fn, 100)
+        self.app.call_ui(
+            self.progress_fn, 100,
+            current=total, total=total,
+            phase="Completado", detail_pct=100,
+        )
         self.app.call_ui(
             self.log_fn,
             f"Listo: {corregidos}/{total} corregidos | Errores: {errores} | {tiempo_total:.1f}s",
@@ -662,450 +698,73 @@ class TkCleanerUI:
 
 
 def restart_application() -> None:
-    """Cierra la app actual y la vuelve a lanzar (script o EXE)."""
+    """
+    Cierra la app actual y la vuelve a lanzar (script, VBS o EXE).
+    Tras un update SIEMPRE se usa esto — no dejar la UI vieja abierta.
+    """
+    cwd = str(APP_DIR)
+    cmd: list[str] = []
     try:
         if getattr(sys, "frozen", False):
-            # Onedir EXE: relanzar el mismo ejecutable
             cmd = [sys.executable]
-            cwd = str(APP_DIR)
         else:
+            # Preferir launcher VBS (sin consola) → pythonw script
+            vbs = APP_DIR / "ejecutar_Cleaner_X.vbs"
+            bat = APP_DIR / "ejecutar_Cleaner_X.bat"
             script = APP_DIR / "RemixZ_Cleaner_X_App.py"
-            # Preferir pythonw en Windows
-            exe = sys.executable
-            if os.name == "nt" and exe.lower().endswith("python.exe"):
-                pyw = exe[:-10] + "pythonw.exe"
-                if Path(pyw).exists():
-                    exe = pyw
-            cmd = [exe, str(script)]
-            cwd = str(APP_DIR)
+            if os.name == "nt" and vbs.exists():
+                cmd = ["wscript.exe", str(vbs)]
+            elif os.name == "nt" and bat.exists():
+                cmd = ["cmd.exe", "/c", str(bat)]
+            else:
+                exe = sys.executable
+                if os.name == "nt" and exe.lower().endswith("python.exe"):
+                    pyw = exe[:-10] + "pythonw.exe"
+                    if Path(pyw).exists():
+                        exe = pyw
+                cmd = [exe, str(script)]
+
         flags = 0
         if os.name == "nt":
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            flags = (
+                getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             )
-        subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            close_fds=True,
-            creationflags=flags,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-        )
-    except Exception:
-        pass
+        # Pequeña espera en proceso hijo: dar tiempo a liberar .py/.pyd
+        if os.name == "nt":
+            # cmd /c timeout then start — más fiable tras overwrite de update
+            inner = subprocess.list2cmdline(cmd)
+            wrapper = f'ping -n 2 127.0.0.1 >nul & {inner}'
+            subprocess.Popen(
+                ["cmd.exe", "/c", wrapper],
+                cwd=cwd,
+                close_fds=True,
+                creationflags=flags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                close_fds=True,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        _log_boot(f"restart_application: launched {cmd!r}")
+    except Exception as exc:
+        try:
+            _log_boot(f"restart_application FAIL: {exc}")
+        except Exception:
+            pass
     try:
         os._exit(0)
     except Exception:
         sys.exit(0)
-
-
-# ---------------------------------------------------------------------------
-# ClubRemix DJ Tools (panel independiente)
-# ---------------------------------------------------------------------------
-class DJToolsWindow(tk.Toplevel):
-    """Panel: renombrar membresía + actualizar TITLE con barra de progreso."""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent_app = parent
-        self.title(f"ClubRemix DJ Tools  ·  v{VERSION}")
-        self.geometry("720x620")
-        self.minsize(640, 560)
-        self.configure(bg=BG)
-        self._busy = False
-        self._folder = ""
-        self._cancel = False
-        self.fluent = FluentUI(dict(FLUENT), root=self)
-        ico = APP_DIR / "icono.ico"
-        if ico.exists():
-            try:
-                self.iconbitmap(str(ico))
-            except Exception:
-                pass
-        apply_fluent_style(self)
-        self._build()
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        try:
-            self.transient(parent)
-        except Exception:
-            pass
-        self.update_idletasks()
-        try:
-            px = parent.winfo_rootx() + 40
-            py = parent.winfo_rooty() + 40
-            self.geometry(f"+{px}+{py}")
-        except Exception:
-            pass
-
-    def _on_close(self):
-        if self._busy:
-            self._cancel = True
-            return
-        try:
-            self.parent_app._dj_win = None
-        except Exception:
-            pass
-        self.destroy()
-
-    def _build(self):
-        head = tk.Frame(self, bg=FLUENT["header"], height=56)
-        head.pack(fill="x")
-        head.pack_propagate(False)
-        tk.Frame(head, bg=ACCENT, height=2).pack(fill="x", side="bottom")
-        left = tk.Frame(head, bg=FLUENT["header"])
-        left.pack(side="left", fill="y", padx=16, pady=8)
-        tk.Label(
-            left, text="ClubRemix DJ Tools",
-            font=("Segoe UI Semibold", 14), fg=FG, bg=FLUENT["header"],
-        ).pack(anchor="w")
-        tk.Label(
-            left, text="Membresía automática · renombrar · TITLE · preview",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["header"],
-        ).pack(anchor="w")
-        tag = remixz_djtools.clubremix_tag()
-        tk.Label(
-            head, text=tag,
-            font=("Consolas", 9), fg=ACCENT_CYAN, bg=FLUENT["header"],
-        ).pack(side="right", padx=16)
-
-        body = tk.Frame(self, bg=BG)
-        body.pack(fill="both", expand=True, padx=18, pady=14)
-
-        # Carpeta
-        tk.Label(
-            body, text="CARPETA DE ARCHIVOS",
-            font=("Segoe UI Semibold", 9), fg=FLUENT.get("text_dim", FG_MUTED), bg=BG,
-        ).pack(anchor="w")
-        folder_row = tk.Frame(body, bg=BG)
-        folder_row.pack(fill="x", pady=(4, 10))
-        self.folder_lbl = tk.Label(
-            folder_row, text="Ninguna seleccionada",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["input"],
-            anchor="w", padx=10, pady=8,
-            highlightthickness=1, highlightbackground=FLUENT["border"],
-        )
-        self.folder_lbl.pack(side="left", fill="x", expand=True)
-        self.fluent.button(
-            folder_row, "  Examinar…  ", self._browse, kind="secondary",
-        ).pack(side="right", padx=(10, 0))
-
-        # Opciones
-        opt = tk.Frame(body, bg=FLUENT["card"], highlightthickness=1,
-                       highlightbackground=FLUENT["border"])
-        opt.pack(fill="x", pady=(0, 10))
-        opt_in = tk.Frame(opt, bg=FLUENT["card"])
-        opt_in.pack(fill="x", padx=12, pady=10)
-        tk.Label(
-            opt_in, text="Opciones de membresía",
-            font=("Segoe UI Semibold", 10), fg=ACCENT_CYAN, bg=FLUENT["card"],
-        ).pack(anchor="w", pady=(0, 6))
-        row_o = tk.Frame(opt_in, bg=FLUENT["card"])
-        row_o.pack(fill="x")
-        tk.Label(row_o, text="Mes:", font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"]).pack(side="left")
-        self.month_var = tk.StringVar(value=remixz_djtools.MESES[datetime.now().month - 1])
-        self.month_cb = ttk.Combobox(
-            row_o, textvariable=self.month_var, values=list(remixz_djtools.MESES),
-            width=6, state="readonly",
-        )
-        self.month_cb.pack(side="left", padx=(6, 14))
-        tk.Label(row_o, text="Año:", font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"]).pack(side="left")
-        self.year_var = tk.StringVar(value=str(datetime.now().year))
-        self.year_entry = ttk.Entry(row_o, textvariable=self.year_var, width=6)
-        self.year_entry.pack(side="left", padx=(6, 14))
-        self.recursive_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            row_o, text="Subcarpetas", variable=self.recursive_var,
-            font=("Segoe UI", 9), fg=FG, bg=FLUENT["card"],
-            activebackground=FLUENT["card"], selectcolor=FLUENT["input"],
-            highlightthickness=0,
-        ).pack(side="left", padx=(4, 10))
-        self.preview_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            row_o, text="Solo preview (dry-run)", variable=self.preview_var,
-            font=("Segoe UI", 9), fg=FG, bg=FLUENT["card"],
-            activebackground=FLUENT["card"], selectcolor=FLUENT["input"],
-            highlightthickness=0,
-        ).pack(side="left")
-
-        # Estado
-        status_card = tk.Frame(
-            body, bg=FLUENT["card"],
-            highlightthickness=1, highlightbackground=FLUENT["border"],
-        )
-        status_card.pack(fill="x", pady=(0, 10))
-        sc = tk.Frame(status_card, bg=FLUENT["card"])
-        sc.pack(fill="x", padx=12, pady=10)
-        tk.Label(
-            sc, text="ESTADO DJ", font=("Segoe UI Semibold", 9),
-            fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["card"],
-        ).pack(anchor="w")
-        self.dj_status = tk.Label(
-            sc, text="DJ READY 🎧", font=("Segoe UI Semibold", 14),
-            fg=ACCENT_GREEN, bg=FLUENT["card"],
-        )
-        self.dj_status.pack(anchor="w", pady=(2, 0))
-        self.detail = tk.Label(
-            sc, text="Elige carpeta y una acción.",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"],
-            anchor="w", justify="left", wraplength=640,
-        )
-        self.detail.pack(fill="x", pady=(4, 0))
-        ff = remixz_djtools.find_ffmpeg()
-        ff_txt = f"ffmpeg: {ff}" if ff else "ffmpeg: no encontrado → TITLE usará mutagen si está disponible"
-        tk.Label(
-            sc, text=ff_txt, font=("Consolas", 8),
-            fg=ACCENT_CYAN if ff else ACCENT_ORANGE, bg=FLUENT["card"],
-            anchor="w", wraplength=640, justify="left",
-        ).pack(fill="x", pady=(6, 0))
-
-        # Botones
-        btn_row = tk.Frame(body, bg=BG)
-        btn_row.pack(fill="x", pady=(0, 10))
-        self.btn_rename = self.fluent.button(
-            btn_row, "  Renombrar membresía  ", self._do_rename, kind="primary",
-        )
-        self.btn_rename.pack(side="left")
-        self.btn_title = self.fluent.button(
-            btn_row, "  Actualizar TITLE  ", self._do_title, kind="success",
-        )
-        self.btn_title.pack(side="left", padx=(10, 0))
-        self.btn_preview = self.fluent.button(
-            btn_row, "  Preview  ", self._do_preview, kind="secondary",
-        )
-        self.btn_preview.pack(side="left", padx=(10, 0))
-
-        # Progreso (barra gradient)
-        tk.Label(
-            body, text="PROGRESO",
-            font=("Segoe UI Semibold", 9), fg=FLUENT.get("text_dim", FG_MUTED), bg=BG,
-        ).pack(anchor="w")
-        prog_row = tk.Frame(body, bg=BG)
-        prog_row.pack(fill="x", pady=(4, 4))
-        self.prog = RoundedGradientProgress(
-            prog_row, height=14, maximum=100, mode="determinate",
-            colors=dict(FLUENT), gradient=(ACCENT, ACCENT_CYAN), bg=BG,
-        )
-        self.prog.pack(side="left", fill="x", expand=True)
-        self.pct_lbl = tk.Label(
-            prog_row, text="0%", font=("Segoe UI Semibold", 10),
-            fg=ACCENT_CYAN, bg=BG, width=5,
-        )
-        self.pct_lbl.pack(side="right", padx=(10, 0))
-        self.prog_msg = tk.Label(
-            body, text="", font=("Segoe UI", 8), fg=FG_MUTED, bg=BG, anchor="w",
-        )
-        self.prog_msg.pack(fill="x")
-
-        # Log
-        log_shell = tk.Frame(
-            body, bg=FLUENT["card"],
-            highlightthickness=1, highlightbackground=FLUENT["border"],
-        )
-        log_shell.pack(fill="both", expand=True, pady=(8, 0))
-        self.log = scrolledtext.ScrolledText(
-            log_shell, height=8, font=("Consolas", 8),
-            bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
-            highlightthickness=0, state="disabled",
-        )
-        self.log.pack(fill="both", expand=True, padx=8, pady=8)
-
-        tk.Label(
-            body,
-            text="Fuente: ClubRemix DJ Edition  ·  tag automático por mes",
-            font=("Segoe UI", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=BG,
-        ).pack(anchor="w", pady=(8, 0))
-
-    def _current_tag(self) -> str:
-        mes = (self.month_var.get() or "ENE").upper()
-        try:
-            m_idx = remixz_djtools.MESES.index(mes) + 1
-        except ValueError:
-            m_idx = datetime.now().month
-        try:
-            year = int(str(self.year_var.get()).strip() or datetime.now().year)
-        except ValueError:
-            year = datetime.now().year
-        return remixz_djtools.clubremix_tag(month=m_idx, year=year)
-
-    def _log(self, line: str):
-        self.log.configure(state="normal")
-        self.log.insert("end", line + "\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
-
-    def _browse(self):
-        folder = filedialog.askdirectory(
-            title="Carpeta para ClubRemix DJ Tools",
-            initialdir=str(APP_DIR),
-        )
-        if not folder:
-            return
-        self._folder = folder
-        n = len(remixz_djtools.get_media_files(folder, recursive=self.recursive_var.get()))
-        self.folder_lbl.configure(text=folder, fg=FG)
-        self.detail.configure(text=f"{n} archivos multimedia detectados.")
-        self._log(f"Carpeta: {folder} ({n} media)")
-
-    def _set_busy(self, busy: bool):
-        self._busy = busy
-        state = "disabled" if busy else "normal"
-        for b in (self.btn_rename, self.btn_title, self.btn_preview):
-            try:
-                b.configure(state=state)
-            except Exception:
-                pass
-
-    def _progress(self, cur: int, total: int, msg: str):
-        def ui():
-            pct = int(cur / total * 100) if total else 0
-            try:
-                self.prog.set(pct)
-            except Exception:
-                try:
-                    self.prog.configure(value=pct)
-                except Exception:
-                    pass
-            self.pct_lbl.configure(text=f"{pct}%")
-            self.prog_msg.configure(text=msg)
-        self.after(0, ui)
-
-    def _do_preview(self):
-        if self._busy:
-            return
-        if not self._folder:
-            self.detail.configure(text="Selecciona una carpeta primero.")
-            return
-        tag = self._current_tag()
-        info = remixz_djtools.preview_rename(
-            self._folder, tag=tag, recursive=self.recursive_var.get(),
-        )
-        self._log(f"── Preview · tag: {tag}")
-        self._log(f"Total: {info['total']} · renombrarían: {info['will_rename']} · iguales: {info['unchanged']}")
-        for c in info.get("sample") or []:
-            self._log(f"  {c['from']}")
-            self._log(f"  → {c['to']}")
-        self.detail.configure(
-            text=f"Preview: {info['will_rename']}/{info['total']} se renombrarían · {tag}",
-        )
-        self.dj_status.configure(text="PREVIEW ✔", fg=ACCENT_CYAN)
-
-    def _do_rename(self):
-        if self._busy:
-            return
-        if not self._folder:
-            self.detail.configure(text="Selecciona una carpeta primero.")
-            return
-        tag = self._current_tag()
-        dry = bool(self.preview_var.get())
-        self._cancel = False
-        self._set_busy(True)
-        self.dj_status.configure(text="DJ MIXING…  ▂ ▄ ▆ █ ▆ ▄ ▂", fg=ACCENT)
-        try:
-            self.prog.set(0)
-        except Exception:
-            pass
-        self._log(f"── Renombrar · tag: {tag} · dry_run={dry}")
-
-        def worker():
-            result = remixz_djtools.rename_with_membership(
-                self._folder,
-                progress_cb=self._progress,
-                tag=tag,
-                recursive=self.recursive_var.get(),
-                dry_run=dry,
-                cancel_cb=lambda: self._cancel,
-            )
-
-            def done():
-                self._set_busy(False)
-                if result.get("cancelled"):
-                    self.dj_status.configure(text="CANCELADO", fg=ACCENT_ORANGE)
-                    self.detail.configure(text="Operación cancelada.")
-                    return
-                self.dj_status.configure(text="DJ READY 🎧", fg=ACCENT_GREEN)
-                mode = " (preview)" if dry else ""
-                self.detail.configure(
-                    text=(
-                        f"Renombrados{mode}: {result.get('renamed', 0)}  ·  "
-                        f"omitidos: {result.get('skipped', 0)}  ·  "
-                        f"errores: {result.get('errors', 0)}\nTag: {result.get('tag', tag)}"
-                    ),
-                )
-                for line in (result.get("log") or [])[:25]:
-                    self._log(line)
-                self._log(
-                    f"OK rename: {result.get('renamed')}/{result.get('total')} · err {result.get('errors')}"
-                )
-                try:
-                    self.prog.set(100)
-                    self.pct_lbl.configure(text="100%")
-                except Exception:
-                    pass
-
-            self.after(0, done)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _do_title(self):
-        if self._busy:
-            return
-        if not self._folder:
-            self.detail.configure(text="Selecciona una carpeta primero.")
-            return
-        tag = self._current_tag()
-        self._cancel = False
-        self._set_busy(True)
-        self.dj_status.configure(text="DJ MIXING…", fg=ACCENT)
-        try:
-            self.prog.set(0)
-        except Exception:
-            pass
-        self._log(f"── TITLE · tag: {tag}")
-
-        def worker():
-            result = remixz_djtools.update_titles_with_ffmpeg(
-                self._folder,
-                progress_cb=self._progress,
-                tag=tag,
-                recursive=self.recursive_var.get(),
-                allow_mutagen=True,
-                cancel_cb=lambda: self._cancel,
-            )
-
-            def done():
-                self._set_busy(False)
-                if not result.get("ok") and result.get("error"):
-                    self.dj_status.configure(text="DJ ERROR", fg="#ff6b7a")
-                    self.detail.configure(text=result["error"])
-                    self._log(result["error"])
-                    return
-                self.dj_status.configure(text="DJ READY 🎧", fg=ACCENT_GREEN)
-                via = []
-                if result.get("via_ffmpeg"):
-                    via.append(f"ffmpeg×{result['via_ffmpeg']}")
-                if result.get("via_mutagen"):
-                    via.append(f"mutagen×{result['via_mutagen']}")
-                via_s = " · ".join(via) if via else result.get("method", "")
-                self.detail.configure(
-                    text=(
-                        f"TITLE actualizado ✔  {result.get('updated', 0)}/{result.get('total', 0)}"
-                        f"  ·  errores: {result.get('errors', 0)}\n"
-                        f"Tag: {result.get('tag', tag)}  ·  {via_s}"
-                    ),
-                )
-                self._log(
-                    f"TITLE: {result.get('updated')}/{result.get('total')} · {via_s}"
-                )
-                try:
-                    self.prog.set(100)
-                    self.pct_lbl.configure(text="100%")
-                except Exception:
-                    pass
-
-            self.after(0, done)
-
-        threading.Thread(target=worker, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -1174,12 +833,17 @@ class UpdateProgressWindow(tk.Toplevel):
         )
         self.sub_lbl.pack(fill="x", pady=(2, 12))
 
-        # Barra gradient
+        # Barra redondeada + degradado
         prow = tk.Frame(body, bg=c["surface"])
         prow.pack(fill="x")
         self.prog = RoundedGradientProgress(
-            prow, height=14, maximum=100, mode="determinate",
-            colors=dict(FLUENT), gradient=(ACCENT, ACCENT_CYAN), bg=c["surface"],
+            prow,
+            height=12,
+            maximum=100,
+            mode="determinate",
+            colors=c,
+            gradient=(c["accent"], c["cyan"]),
+            bg=c["surface"],
         )
         self.prog.pack(side="left", fill="x", expand=True)
         self.pct_lbl = tk.Label(
@@ -1261,7 +925,7 @@ class UpdateProgressWindow(tk.Toplevel):
             return
         pct = max(0, min(100, int(pct)))
         try:
-            self.prog["value"] = pct
+            self.prog.set(pct)
             self.pct_lbl.configure(text=f"{pct}%")
             phase = "Procesando"
             color = ACCENT_CYAN
@@ -1290,17 +954,47 @@ class UpdateProgressWindow(tk.Toplevel):
         except Exception:
             pass
 
-    def finish_ok(self, message: str, on_restart=None, on_later=None):
+    def finish_ok(
+        self,
+        message: str,
+        on_restart=None,
+        on_later=None,
+        *,
+        auto_restart: bool = True,
+        auto_delay_ms: int = 2000,
+    ):
         self._log_line("✓ Update completado")
         self._log_line(message)
         self.phase_lbl.configure(text="Update aplicado", fg=ACCENT_GREEN)
-        self.detail_lbl.configure(text=message)
-        self.prog["value"] = 100
+        self.prog.set(100)
         self.pct_lbl.configure(text="100%")
-        self.protocol("WM_DELETE_WINDOW", lambda: self._done("later", on_later))
 
         for w in self.btn_row.winfo_children():
             w.destroy()
+
+        if auto_restart:
+            # Reinicio automático: no pedir confirmación
+            self.detail_lbl.configure(
+                text=f"{message}\n\nReiniciando automáticamente…"
+            )
+            self.protocol("WM_DELETE_WINDOW", lambda: None)  # bloquear cierre manual
+            self.btn_restart = self.fluent.button(
+                self.btn_row, "  Reiniciando…  ",
+                lambda: None,
+                kind="success", width=16,
+            )
+            self.btn_restart.pack(side="right")
+            try:
+                self.btn_restart.configure(state="disabled")
+            except Exception:
+                pass
+            self._log_line("Reinicio automático en marcha…")
+            delay = max(400, int(auto_delay_ms))
+            self.after(delay, lambda: self._done("restart", on_restart))
+            return
+
+        self.detail_lbl.configure(text=message)
+        self.protocol("WM_DELETE_WINDOW", lambda: self._done("later", on_later))
         self.btn_later = self.fluent.button(
             self.btn_row, "  Continuar sin reiniciar  ",
             lambda: self._done("later", on_later),
@@ -1516,6 +1210,442 @@ class FluentNotify(tk.Toplevel):
 
 
 # ---------------------------------------------------------------------------
+# Password maestro (pruebas ClubRemix)
+# ---------------------------------------------------------------------------
+class MasterPasswordDialog(tk.Toplevel):
+    """Pide password maestro antes de abrir DJ Tools."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        title: str,
+        message: str,
+        expected: str,
+        on_result=None,
+    ):
+        super().__init__(parent)
+        self.on_result = on_result
+        self.expected = str(expected)
+        self.result_ok = False
+        self.title(title)
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.transient(parent)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+        try:
+            self.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+
+        outer = tk.Frame(self, bg=FLUENT["border"])
+        outer.pack(fill="both", expand=True)
+        root = tk.Frame(outer, bg=FLUENT["card"])
+        root.pack(fill="both", expand=True, padx=1, pady=1)
+
+        head = tk.Frame(root, bg=FLUENT["header"], height=52)
+        head.pack(fill="x")
+        head.pack_propagate(False)
+        tk.Frame(head, bg=ACCENT, width=3).pack(side="left", fill="y")
+        tk.Label(
+            head, text="  🔒  ClubRemix · Bloqueado",
+            font=("Segoe UI Semibold", 12), fg=FG, bg=FLUENT["header"],
+        ).pack(side="left", padx=10)
+
+        body = tk.Frame(root, bg=FLUENT["card"])
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+        tk.Label(
+            body, text=message,
+            font=("Segoe UI", 10), fg=FG_MUTED, bg=FLUENT["card"],
+            justify="left", wraplength=360,
+        ).pack(anchor="w", pady=(0, 12))
+
+        tk.Label(
+            body, text="CÓDIGO DE ACCESO (si aplica)",
+            font=("Segoe UI", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["card"],
+        ).pack(anchor="w")
+        self.entry = tk.Entry(
+            body,
+            font=("Segoe UI", 12),
+            show="●",
+            bg=FLUENT["input"], fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=FLUENT["border"],
+            highlightcolor=ACCENT,
+        )
+        self.entry.pack(fill="x", ipady=8, pady=(4, 6))
+        self.err_lbl = tk.Label(
+            body, text="", font=("Segoe UI", 9),
+            fg="#ff6b7a", bg=FLUENT["card"],
+        )
+        self.err_lbl.pack(anchor="w")
+
+        btns = tk.Frame(body, bg=FLUENT["card"])
+        btns.pack(fill="x", pady=(14, 0))
+        fluent = FluentUI(dict(FLUENT), root=self)
+        fluent.button(btns, "  Cerrar  ", self._cancel, kind="standard", width=12).pack(
+            side="right", padx=(8, 0)
+        )
+        fluent.button(btns, "  Continuar  ", self._ok, kind="accent", width=12).pack(side="right")
+
+        self.entry.bind("<Return>", lambda _e: self._ok())
+        self.entry.bind("<Escape>", lambda _e: self._cancel())
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        self.update_idletasks()
+        w, h = 420, 260
+        try:
+            px = parent.winfo_rootx() + max(0, (parent.winfo_width() - w) // 2)
+            py = parent.winfo_rooty() + max(0, (parent.winfo_height() - h) // 2)
+            self.geometry(f"{w}x{h}+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            self.geometry(f"{w}x{h}")
+        self.after(80, self.entry.focus_force)
+
+    def _finish(self, ok: bool):
+        self.result_ok = ok
+        cb = self.on_result
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        if cb:
+            try:
+                cb(ok)
+            except Exception:
+                pass
+
+    def _ok(self):
+        val = (self.entry.get() or "").strip()
+        if val == self.expected:
+            self._finish(True)
+        else:
+            self.err_lbl.configure(text="Password incorrecto. Intenta de nuevo.")
+            self.entry.delete(0, "end")
+            self.entry.focus_force()
+
+    def _cancel(self):
+        self._finish(False)
+
+
+# ---------------------------------------------------------------------------
+# ClubRemix DJ Tools (port de DJTOOLS.ps1) — misma UI
+# ---------------------------------------------------------------------------
+class DJToolsWindow(tk.Toplevel):
+    """Panel independiente: renombrar membresía + actualizar TITLE."""
+
+    def __init__(self, parent: "CleanerXApp"):
+        super().__init__(parent)
+        self.parent_app = parent
+        self.title(f"ClubRemix DJ Tools  ·  v{VERSION}")
+        self.geometry("640x520")
+        self.minsize(560, 460)
+        self.configure(bg=BG)
+        self._busy = False
+        self._folder = ""
+        self.fluent = FluentUI(dict(FLUENT), root=self)
+
+        ico = APP_DIR / "icono.ico"
+        if ico.exists():
+            try:
+                self.iconbitmap(str(ico))
+            except Exception:
+                pass
+
+        self._build()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        try:
+            self.transient(parent)
+        except Exception:
+            pass
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx() + max(0, (parent.winfo_width() - 640) // 2)
+            py = parent.winfo_rooty() + max(0, (parent.winfo_height() - 520) // 2)
+            self.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+        try:
+            fade_in_window(self, steps=8, delay_ms=14)
+        except Exception:
+            pass
+        self.focus_force()
+
+    def _on_close(self):
+        if self._busy:
+            return
+        try:
+            self.parent_app._dj_win = None
+        except Exception:
+            pass
+        self.destroy()
+
+    def _build(self):
+        # Header
+        head = tk.Frame(self, bg=FLUENT["header"], height=64)
+        head.pack(fill="x")
+        head.pack_propagate(False)
+        tk.Frame(head, bg=ACCENT, width=3).pack(side="left", fill="y")
+        if getattr(self.parent_app, "_img_logo_header", None) is not None:
+            img = self.parent_app._img_logo_header
+            lbl = tk.Label(head, image=img, bg=FLUENT["header"], bd=0)
+            lbl.image = img
+            lbl.pack(side="left", padx=(12, 8), pady=12)
+        left = tk.Frame(head, bg=FLUENT["header"])
+        left.pack(side="left", pady=12)
+        tk.Label(
+            left, text="ClubRemix DJ Tools",
+            font=("Segoe UI Black", 14), fg=FG, bg=FLUENT["header"],
+        ).pack(anchor="w")
+        tk.Label(
+            left, text="Membresía automática · renombrar · TITLE (ffmpeg)",
+            font=("Segoe UI", 8), fg=FG_MUTED, bg=FLUENT["header"],
+        ).pack(anchor="w")
+        tag = remixz_djtools.clubremix_tag()
+        tk.Label(
+            head, text=tag,
+            font=("Segoe UI Semibold", 8), fg=ACCENT_CYAN, bg=FLUENT["header"],
+        ).pack(side="right", padx=14)
+        tk.Frame(self, bg=ACCENT, height=1).pack(fill="x")
+
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        # Carpeta
+        tk.Label(
+            body, text="CARPETA DE ARCHIVOS",
+            font=("Segoe UI Semibold", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=BG,
+        ).pack(anchor="w")
+        folder_row = tk.Frame(body, bg=BG)
+        folder_row.pack(fill="x", pady=(6, 12))
+        self.folder_lbl = tk.Label(
+            folder_row,
+            text="Ninguna seleccionada",
+            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["input"],
+            anchor="w", padx=12, pady=10,
+            highlightthickness=1, highlightbackground=FLUENT["border"],
+        )
+        self.folder_lbl.pack(side="left", fill="x", expand=True)
+        self.fluent.button(
+            folder_row, "  Examinar  ", self._browse, kind="standard", width=12,
+        ).pack(side="right", padx=(10, 0))
+
+        # Estado DJ
+        status_card = tk.Frame(
+            body, bg=FLUENT["card"],
+            highlightthickness=1, highlightbackground=FLUENT["border"],
+        )
+        status_card.pack(fill="x", pady=(0, 12))
+        tk.Frame(status_card, bg=ACCENT, height=2).pack(fill="x")
+        sc = tk.Frame(status_card, bg=FLUENT["card"])
+        sc.pack(fill="x", padx=14, pady=12)
+        tk.Label(
+            sc, text="ESTADO DJ", font=("Segoe UI Semibold", 8),
+            fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["card"],
+        ).pack(anchor="w")
+        self.dj_status = tk.Label(
+            sc, text="DJ READY 🎧",
+            font=("Segoe UI Semibold", 12), fg=ACCENT_CYAN, bg=FLUENT["card"],
+        )
+        self.dj_status.pack(anchor="w", pady=(4, 0))
+        self.detail = tk.Label(
+            sc, text="Elige carpeta y una acción.",
+            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"],
+        )
+        self.detail.pack(anchor="w", pady=(2, 0))
+
+        # Acciones
+        btn_row = tk.Frame(body, bg=BG)
+        btn_row.pack(fill="x", pady=(0, 12))
+        self.btn_rename = self.fluent.button(
+            btn_row, "  Renombrar archivos  ", self._do_rename, kind="accent", width=20,
+        )
+        self.btn_rename.pack(side="left")
+        self.btn_title = self.fluent.button(
+            btn_row, "  Actualizar TITLE  ", self._do_title, kind="success", width=20,
+        )
+        self.btn_title.pack(side="left", padx=(10, 0))
+        self.fluent.button(
+            btn_row, "  Cerrar  ", self._on_close, kind="standard", width=10,
+        ).pack(side="right")
+
+        # Progreso
+        tk.Label(
+            body, text="PROGRESO",
+            font=("Segoe UI Semibold", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=BG,
+        ).pack(anchor="w")
+        self.prog = RoundedGradientProgress(
+            body, height=12, maximum=100, mode="determinate",
+            colors=dict(FLUENT),
+            gradient=(FLUENT["accent"], FLUENT["cyan"]),
+            bg=BG,
+        )
+        self.prog.pack(fill="x", pady=(6, 4))
+        self.pct_lbl = tk.Label(
+            body, text="0%", font=("Segoe UI Semibold", 9),
+            fg=ACCENT_CYAN, bg=BG, anchor="e",
+        )
+        self.pct_lbl.pack(fill="x")
+
+        # ffmpeg hint
+        ff = remixz_djtools.find_ffmpeg()
+        ff_txt = f"ffmpeg: {ff}" if ff else "ffmpeg: no encontrado (C:\\ffmpeg\\bin\\ffmpeg.exe)"
+        tk.Label(
+            body, text=ff_txt,
+            font=("Consolas", 8),
+            fg=ACCENT_GREEN if ff else ACCENT_ORANGE,
+            bg=BG, anchor="w",
+        ).pack(fill="x", pady=(8, 0))
+
+        foot = tk.Frame(self, bg=FLUENT["header"], height=28)
+        foot.pack(side="bottom", fill="x")
+        foot.pack_propagate(False)
+        tk.Label(
+            foot, text="Fuente: DJTOOLS.ps1  ·  ClubRemix DJ Edition",
+            font=("Segoe UI", 8), fg=FG_MUTED, bg=FLUENT["header"],
+        ).pack(side="left", padx=12, pady=5)
+
+    def _browse(self):
+        folder = filedialog.askdirectory(
+            title="Carpeta para ClubRemix DJ Tools",
+            initialdir=self._folder or str(APP_DIR),
+            parent=self,
+        )
+        if not folder:
+            return
+        self._folder = folder
+        self.folder_lbl.configure(text=folder, fg=FG)
+        n = len(remixz_djtools.get_media_files(folder))
+        self.detail.configure(text=f"{n} archivos multimedia detectados.")
+
+    def _set_busy(self, busy: bool):
+        self._busy = busy
+        state = "disabled" if busy else "normal"
+        for b in (self.btn_rename, self.btn_title):
+            try:
+                b.configure(state=state)
+            except Exception:
+                pass
+
+    def _progress(self, cur: int, total: int, msg: str):
+        pct = int(cur / total * 100) if total else 0
+
+        def ui():
+            try:
+                self.prog.set(pct)
+                self.pct_lbl.configure(text=f"{pct}%")
+                self.detail.configure(text=msg)
+                self.dj_status.configure(text="DJ MIXING…  ▂ ▄ ▆ █ ▆ ▄ ▂", fg=ACCENT)
+            except Exception:
+                pass
+
+        self.after(0, ui)
+
+    def _do_rename(self):
+        if self._busy:
+            return
+        if not self._folder:
+            self.detail.configure(text="Selecciona una carpeta primero.")
+            return
+        self._set_busy(True)
+        self.dj_status.configure(text="DJ MIXING…", fg=ACCENT)
+        self.prog.set(0)
+
+        def worker():
+            try:
+                result = remixz_djtools.rename_with_membership(
+                    self._folder, progress_cb=self._progress,
+                )
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+
+            def done():
+                self._set_busy(False)
+                self.dj_status.configure(text="DJ READY 🎧", fg=ACCENT_CYAN)
+                if not result.get("ok", True) and result.get("error"):
+                    self.detail.configure(text=result["error"])
+                    return
+                self.prog.set(100)
+                self.pct_lbl.configure(text="100%")
+                self.detail.configure(
+                    text=(
+                        f"Renombrado ✔  {result.get('renamed', 0)}/{result.get('total', 0)}  "
+                        f"| skip {result.get('skipped', 0)}  | err {result.get('errors', 0)}\n"
+                        f"Tag: {result.get('tag', '')}"
+                    )
+                )
+                try:
+                    self.parent_app._append_log(
+                        f"DJ Tools rename: {result.get('renamed')}/{result.get('total')} · {result.get('tag')}"
+                    )
+                except Exception:
+                    pass
+
+            self.after(0, done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _do_title(self):
+        if self._busy:
+            return
+        if not self._folder:
+            self.detail.configure(text="Selecciona una carpeta primero.")
+            return
+        if not remixz_djtools.find_ffmpeg():
+            self.detail.configure(
+                text="ffmpeg no encontrado en C:\\ffmpeg\\bin\\ffmpeg.exe"
+            )
+            self.dj_status.configure(text="DJ ERROR", fg="#ff6b7a")
+            return
+        self._set_busy(True)
+        self.dj_status.configure(text="DJ MIXING…", fg=ACCENT)
+        self.prog.set(0)
+
+        def worker():
+            try:
+                result = remixz_djtools.update_titles_with_ffmpeg(
+                    self._folder, progress_cb=self._progress,
+                )
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+
+            def done():
+                self._set_busy(False)
+                self.dj_status.configure(text="DJ READY 🎧", fg=ACCENT_CYAN)
+                if not result.get("ok"):
+                    self.detail.configure(text=result.get("error") or "Error al actualizar TITLE")
+                    return
+                self.prog.set(100)
+                self.pct_lbl.configure(text="100%")
+                self.detail.configure(
+                    text=(
+                        f"TITLE actualizado ✔  {result.get('updated', 0)}/{result.get('total', 0)}  "
+                        f"| err {result.get('errors', 0)}\n"
+                        f"Tag: {result.get('tag', '')}"
+                    )
+                )
+                try:
+                    self.parent_app._append_log(
+                        f"DJ Tools TITLE: {result.get('updated')}/{result.get('total')} · {result.get('tag')}"
+                    )
+                except Exception:
+                    pass
+
+            self.after(0, done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
 # App principal
 # ---------------------------------------------------------------------------
 class CleanerXApp(tk.Tk):
@@ -1527,10 +1657,9 @@ class CleanerXApp(tk.Tk):
             self.withdraw()
 
         self.title(APP_TITLE)
-        self.geometry("900x720")
-        self.minsize(780, 640)
+        self.geometry("920x720")
+        self.minsize(840, 640)
         self.configure(bg=BG)
-        self._dj_win = None
 
         # Icono si existe
         ico = APP_DIR / "icono.ico"
@@ -1539,6 +1668,12 @@ class CleanerXApp(tk.Tk):
                 self.iconbitmap(str(ico))
             except Exception:
                 pass
+
+        # Logos X (diseño de marca) — mantener refs para no perder PhotoImage
+        self._img_logo_header = None
+        self._img_logo_hero = None
+        self._img_logo_main = None
+        self._load_brand_images()
 
         self.config_data = {}
         try:
@@ -1555,6 +1690,31 @@ class CleanerXApp(tk.Tk):
 
         apply_fluent_style(self)
         self._build()
+
+    def _load_brand_images(self) -> None:
+        """Carga variantes del logo X (diseño de marca)."""
+        candidates = {
+            "header": ["logo_x_header.png", "logo_x_64.png", "logo_x.png"],
+            "hero": ["logo_x_128.png", "logo_x_96.png", "logo_x.png"],
+            "main": ["logo_x_64.png", "logo_x_96.png", "logo_x.png"],
+        }
+        for key, names in candidates.items():
+            img = None
+            for name in names:
+                path = APP_DIR / name
+                if not path.exists():
+                    continue
+                try:
+                    img = tk.PhotoImage(file=str(path))
+                    break
+                except Exception:
+                    img = None
+            if key == "header":
+                self._img_logo_header = img
+            elif key == "hero":
+                self._img_logo_hero = img
+            else:
+                self._img_logo_main = img
 
     def call_ui(self, func, *args, **kwargs):
         self.after(0, lambda: func(*args, **kwargs))
@@ -1573,19 +1733,46 @@ class CleanerXApp(tk.Tk):
         )
 
     def reveal(self):
+        """Muestra la ventana de forma fiable (evita quedar invisible por alpha/off-screen)."""
         try:
-            self.attributes("-alpha", 0.0)
+            self.deiconify()
+        except Exception:
+            pass
+        try:
+            self.state("normal")
+        except Exception:
+            pass
+        # Centrar en pantalla principal
+        try:
+            self.update_idletasks()
+            w = max(self.winfo_width(), 900)
+            h = max(self.winfo_height(), 700)
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            x = max(0, (sw - w) // 2)
+            y = max(0, (sh - h) // 2)
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+        # Opacidad siempre al 100% (fade opcional; si falla no deja la app invisible)
+        try:
+            self.attributes("-alpha", 1.0)
         except tk.TclError:
             pass
-        self.deiconify()
-        self.lift()
         try:
-            fade_in_window(self, steps=12, delay_ms=16)
+            self.attributes("-topmost", True)
+            self.lift()
+            self.focus_force()
+            self.after(400, lambda: self.attributes("-topmost", False))
         except Exception:
             try:
-                self.attributes("-alpha", 1.0)
-            except tk.TclError:
+                self.lift()
+            except Exception:
                 pass
+        try:
+            self.update()
+        except Exception:
+            pass
         self.after(350, self._welcome_check_updates)
 
     def _build(self):
@@ -1593,7 +1780,8 @@ class CleanerXApp(tk.Tk):
             self,
             "Cleaner X",
             version=f"v{VERSION}",
-            subtitle="Deps · updates · 1 opción",
+            subtitle="Identidad X · limpieza profesional de media",
+            logo_image=self._img_logo_header,
         )
 
         self.stack = tk.Frame(self, bg=BG)
@@ -1605,50 +1793,58 @@ class CleanerXApp(tk.Tk):
         self._build_welcome()
         self._build_main()
 
-        bar = tk.Frame(self, bg=FLUENT["header"], height=30)
+        bar = tk.Frame(self, bg=FLUENT["header"], height=34)
         bar.pack(side="bottom", fill="x")
         bar.pack_propagate(False)
-        tk.Frame(bar, bg=ACCENT, height=2).pack(fill="x", side="top")
+        tk.Frame(bar, bg=FLUENT.get("divider", ACCENT), height=1).pack(fill="x", side="top")
+        status_dot = tk.Frame(bar, bg=ACCENT_GREEN, width=7, height=7)
+        status_dot.pack(side="left", padx=(14, 6), pady=12)
         self.footer_lbl = tk.Label(
-            bar, text=f"v{VERSION} · bienvenida",
+            bar, text=f"v{VERSION}  ·  bienvenida",
             font=("Segoe UI", 8), fg=FG_MUTED, bg=FLUENT["header"],
         )
-        self.footer_lbl.pack(side="left", padx=12, pady=5)
+        self.footer_lbl.pack(side="left", pady=8)
         self.footer_right = tk.Label(
-            bar, text="github.com/SMPROJECT115/remixz",
-            font=("Segoe UI", 8), fg=FG_MUTED, bg=FLUENT["header"],
+            bar, text="Cleaner X  ·  REMIXZ",
+            font=("Segoe UI", 8), fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["header"],
         )
-        self.footer_right.pack(side="right", padx=12, pady=5)
+        self.footer_right.pack(side="right", padx=14, pady=8)
 
         self._show_welcome()
 
     def _show_welcome(self):
         self.main_frame.pack_forget()
-        self.welcome_frame.pack(fill="both", expand=True, padx=32, pady=24)
+        self.welcome_frame.pack(fill="both", expand=True, padx=36, pady=20)
 
     def _show_main(self):
         self.welcome_frame.pack_forget()
-        self.main_frame.pack(fill="both", expand=True, padx=24, pady=16)
-        self.footer_lbl.configure(text=f"v{VERSION} · listo · 1 opción")
+        self.main_frame.pack(fill="both", expand=True, padx=28, pady=18)
+        self.footer_lbl.configure(text=f"v{VERSION}  ·  listo")
 
-    def _card(self, parent, title: str = "", accent: str | None = None):
-        """Card Fluent reutilizable."""
+    def _card(self, parent, title: str = "", accent: str | None = None, subtitle: str = ""):
+        """Card profesional con borde sutil y cabecera."""
         ac = accent or ACCENT_CYAN
         shell = tk.Frame(
             parent, bg=FLUENT["card"],
             highlightthickness=1, highlightbackground=FLUENT["border"],
         )
-        shell.pack(fill="x", pady=(0, 12))
+        shell.pack(fill="x", pady=(0, 14))
+        # top accent line
+        tk.Frame(shell, bg=ac, height=2).pack(fill="x")
         inner = tk.Frame(shell, bg=FLUENT["card"])
-        inner.pack(fill="x", padx=16, pady=14)
+        inner.pack(fill="x", padx=18, pady=16)
         if title:
             head = tk.Frame(inner, bg=FLUENT["card"])
-            head.pack(fill="x", pady=(0, 10))
-            tk.Frame(head, bg=ac, width=3, height=16).pack(side="left", padx=(0, 8))
+            head.pack(fill="x", pady=(0, 10 if not subtitle else 4))
             tk.Label(
                 head, text=title, font=("Segoe UI Semibold", 11),
-                fg=ac, bg=FLUENT["card"], anchor="w",
+                fg=FG, bg=FLUENT["card"], anchor="w",
             ).pack(side="left", fill="x")
+            if subtitle:
+                tk.Label(
+                    inner, text=subtitle, font=("Segoe UI", 8),
+                    fg=FG_MUTED, bg=FLUENT["card"], anchor="w",
+                ).pack(fill="x", pady=(0, 10))
         return shell, inner
 
     def _chip(self, parent, label: str, value: str, color: str | None = None):
@@ -1656,16 +1852,16 @@ class CleanerXApp(tk.Tk):
             parent, bg=FLUENT["input"],
             highlightthickness=1, highlightbackground=FLUENT["border"],
         )
-        chip.pack(side="left", padx=(0, 10), pady=2)
+        chip.pack(side="left", padx=(0, 12), pady=2)
         tk.Label(
-            chip, text=label, font=("Segoe UI", 8),
-            fg=FG_MUTED, bg=FLUENT["input"],
-        ).pack(padx=12, pady=(6, 0))
+            chip, text=label.upper(), font=("Segoe UI", 7),
+            fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["input"],
+        ).pack(padx=14, pady=(8, 0))
         val = tk.Label(
-            chip, text=value, font=("Segoe UI Semibold", 12),
+            chip, text=value, font=("Segoe UI Semibold", 13),
             fg=color or FG, bg=FLUENT["input"],
         )
-        val.pack(padx=12, pady=(0, 8))
+        val.pack(padx=14, pady=(0, 10))
         return chip, val
 
     def refresh_dep_ui(self, report: dict | None = None):
@@ -1689,168 +1885,341 @@ class CleanerXApp(tk.Tk):
     def _build_welcome(self):
         f = self.welcome_frame
 
-        # Hero
-        hero = tk.Frame(f, bg=BG)
-        hero.pack(fill="x", pady=(0, 8))
-        tk.Label(
-            hero, text="REMIXZ", font=("Segoe UI Black", 36),
-            fg=ACCENT_CYAN, bg=BG,
-        ).pack(anchor="w")
-        tk.Label(
-            hero, text="Bienvenido a Cleaner X",
-            font=("Segoe UI Semibold", 18), fg=FG, bg=BG,
-        ).pack(anchor="w", pady=(2, 4))
-        tk.Frame(hero, bg=ACCENT, height=2, width=140).pack(anchor="w", pady=(0, 10))
-        tk.Label(
-            hero,
-            text="Limpia nombres y metadatos RemixZ / Tio Dealer / WhatsApp en un solo paso.",
-            font=("Segoe UI", 10), fg=FG_MUTED, bg=BG, anchor="w",
-        ).pack(fill="x")
+        # ── Hero centrado estilo producto (logo X) ─────────────────────────
+        hero_shell = tk.Frame(
+            f, bg=FLUENT.get("panel", FLUENT["surface"]),
+            highlightthickness=1, highlightbackground=FLUENT["border"],
+        )
+        hero_shell.pack(fill="x", pady=(0, 16))
+        # degradado simulado: franja azul superior
+        tk.Frame(hero_shell, bg=ACCENT, height=2).pack(fill="x")
+        tk.Frame(hero_shell, bg=ACCENT_CYAN, height=1).pack(fill="x")
 
-        # Chips de estado
+        hero = tk.Frame(hero_shell, bg=FLUENT.get("panel", FLUENT["surface"]))
+        hero.pack(fill="x", padx=28, pady=26)
+
+        center = tk.Frame(hero, bg=FLUENT.get("panel", FLUENT["surface"]))
+        center.pack(fill="x")
+
+        # Logo X grande
+        logo_row = tk.Frame(center, bg=FLUENT.get("panel", FLUENT["surface"]))
+        logo_row.pack(anchor="center")
+        if self._img_logo_hero is not None:
+            logo_lbl = tk.Label(
+                logo_row,
+                image=self._img_logo_hero,
+                bg=FLUENT.get("panel", FLUENT["surface"]),
+                bd=0,
+            )
+            logo_lbl.image = self._img_logo_hero
+            logo_lbl.pack()
+        else:
+            # Fallback tipográfico
+            tk.Label(
+                logo_row, text="X",
+                font=("Segoe UI Black", 48),
+                fg=ACCENT_CYAN,
+                bg=FLUENT.get("panel", FLUENT["surface"]),
+            ).pack()
+
+        tk.Label(
+            center, text="CLEANER X",
+            font=("Segoe UI Black", 26),
+            fg=FG, bg=FLUENT.get("panel", FLUENT["surface"]),
+        ).pack(pady=(10, 0))
+        tk.Label(
+            center,
+            text="Limpieza profesional de nombres y metadatos\n"
+                 "RemixZ  ·  Tio Dealer  ·  WhatsApp",
+            font=("Segoe UI", 10),
+            fg=FG_MUTED, bg=FLUENT.get("panel", FLUENT["surface"]),
+            justify="center",
+        ).pack(pady=(6, 0))
+
+        # barra acento corta centrada
+        accent_line = tk.Frame(center, bg=FLUENT.get("panel", FLUENT["surface"]))
+        accent_line.pack(pady=(14, 0))
+        tk.Frame(accent_line, bg=ACCENT, height=3, width=72).pack()
+
+        # ── Chips de estado ────────────────────────────────────────────────
         chips = tk.Frame(f, bg=BG)
-        chips.pack(fill="x", pady=(12, 8))
-        self._chip(chips, "VERSIÓN", f"v{VERSION}", ACCENT_CYAN)
-        _, self.dep_chip_val = self._chip(chips, "DEPS", "…", ACCENT_ORANGE)
-        self._chip(chips, "MODO", "1 opción", FG)
+        chips.pack(fill="x", pady=(4, 8))
+        chips_inner = tk.Frame(chips, bg=BG)
+        chips_inner.pack(anchor="center")
+        self._chip(chips_inner, "Versión", f"v{VERSION}", ACCENT_CYAN)
+        _, self.dep_chip_val = self._chip(chips_inner, "Dependencias", "…", ACCENT_ORANGE)
+        self._chip(chips_inner, "Flujo", "1 acción", ACCENT_GREEN)
 
-        # Card dependencias
-        _, dep_body = self._card(f, "Dependencias", ACCENT)
+        # ── Dos cards en fila (deps | updates) ─────────────────────────────
+        row = tk.Frame(f, bg=BG)
+        row.pack(fill="x", pady=(4, 0))
+        row.columnconfigure(0, weight=1)
+        row.columnconfigure(1, weight=1)
+
+        left_wrap = tk.Frame(row, bg=BG)
+        left_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        right_wrap = tk.Frame(row, bg=BG)
+        right_wrap.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+        _, dep_body = self._card(
+            left_wrap, "Dependencias", ACCENT,
+            subtitle="Verificación automática al iniciar",
+        )
         self.dep_status = tk.Label(
             dep_body,
             text=self._dep_report.get("detail") or "Comprobadas al iniciar.",
             font=("Consolas", 9),
             fg=FG_MUTED, bg=FLUENT["card"],
-            anchor="w", justify="left", wraplength=680,
+            anchor="w", justify="left", wraplength=340,
         )
         self.dep_status.pack(fill="x")
 
-        # Card updates
-        _, up_body = self._card(f, "Estado de actualizaciones", ACCENT_CYAN)
+        _, up_body = self._card(
+            right_wrap, "Actualizaciones", ACCENT_CYAN,
+            subtitle="Validación en vivo desde GitHub",
+        )
         self.welcome_status = tk.Label(
             up_body,
             text="Validando updates desde el repositorio…",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 10),
             fg=FG_MUTED, bg=FLUENT["card"],
-            anchor="w", wraplength=680, justify="left",
+            anchor="w", wraplength=340, justify="left",
         )
         self.welcome_status.pack(fill="x")
 
-        self.welcome_prog = ttk.Progressbar(
-            f, mode="indeterminate", style="Fluent.Horizontal.TProgressbar",
+        # Progreso rounded + degradado
+        prog_wrap = tk.Frame(f, bg=BG)
+        prog_wrap.pack(fill="x", pady=(8, 0))
+        tk.Label(
+            prog_wrap, text="Estado del sistema",
+            font=("Segoe UI Semibold", 8),
+            fg=FLUENT.get("text_dim", FG_MUTED), bg=BG, anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+        self.welcome_prog = RoundedGradientProgress(
+            prog_wrap,
+            height=12,
+            maximum=100,
+            mode="indeterminate",
+            colors=dict(FLUENT),
+            gradient=(FLUENT["accent"], FLUENT["cyan"]),
+            bg=BG,
         )
-        self.welcome_prog.pack(fill="x", pady=(4, 0))
+        self.welcome_prog.pack(fill="x")
 
         tk.Label(
             f,
-            text="Al terminar se mostrará una notificación. Pulsa OK para iniciar Cleaner X.",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=BG, anchor="w",
+            text="Al completar la validación se mostrará una notificación. "
+                 "Pulsa OK para entrar al panel de limpieza.",
+            font=("Segoe UI", 9),
+            fg=FLUENT.get("text_dim", FG_MUTED), bg=BG, anchor="center",
+            justify="center",
         ).pack(fill="x", pady=(14, 0))
 
     def _build_main(self):
         body = self.main_frame
+        f_title = font_or_fallback(FONTS["title"])
+        f_body = font_or_fallback(FONTS["body_lg"])
+        f_sub = font_or_fallback(FONTS["subhead"])
+        f_cap = font_or_fallback(FONTS["caption"])
+        f_micro = font_or_fallback(FONTS["micro"])
+        f_mono = font_or_fallback(FONTS["mono"])
+        f_pct = font_or_fallback(FONTS["pct"])
+        f_btn = font_or_fallback(FONTS["btn"])
 
-        # Título + descripción
+        # Cabecera con logo X
         top = tk.Frame(body, bg=BG)
-        top.pack(fill="x", pady=(0, 12))
+        top.pack(fill="x", pady=(0, 16))
+        if self._img_logo_main is not None:
+            logo_lbl = tk.Label(
+                top, image=self._img_logo_main, bg=BG, bd=0,
+            )
+            logo_lbl.image = self._img_logo_main
+            logo_lbl.pack(side="left", padx=(0, 14))
+        left_t = tk.Frame(top, bg=BG)
+        left_t.pack(side="left", fill="x", expand=True)
         tk.Label(
-            top, text="RemixZ Cleaner X",
-            font=("Segoe UI Semibold", 20), fg=ACCENT_CYAN, bg=BG, anchor="w",
+            left_t, text="Panel de limpieza",
+            font=f_title, fg=FG, bg=BG, anchor="w",
         ).pack(fill="x")
         tk.Label(
-            top,
-            text="Una sola opción: elige carpeta y limpia nombres / metadatos.",
-            font=("Segoe UI", 10), fg=FG_MUTED, bg=BG, anchor="w",
-        ).pack(fill="x", pady=(4, 0))
-        tk.Frame(top, bg=ACCENT, height=2, width=100).pack(anchor="w", pady=(8, 0))
+            left_t,
+            text="Selecciona una carpeta y limpia nombres / metadatos en un clic.",
+            font=f_body, fg=FG_MUTED, bg=BG, anchor="w",
+        ).pack(fill="x", pady=(6, 0))
 
-        # Acción principal en card
-        _, action = self._card(body, "Acción principal", ACCENT_GREEN)
+        # Card acción principal — Cleaner
+        _, action = self._card(
+            body, "Acción principal", ACCENT_GREEN,
+            subtitle="Procesa audio, video e imagen en la carpeta elegida.",
+        )
         row = tk.Frame(action, bg=FLUENT["card"])
         row.pack(fill="x")
         self.main_btn = self.fluent.button(
-            row, "  Limpiar carpeta  ", self._run_once, kind="success", width=22,
+            row, "  Limpiar carpeta  ", self._run_once, kind="success", width=18,
         )
         self.main_btn.pack(side="left")
-        self.main_btn.configure(font=("Segoe UI Semibold", 12), pady=12)
+        try:
+            self.main_btn.configure(font=f_btn, pady=12, padx=18)
+        except Exception:
+            try:
+                self.main_btn.configure(font=f_btn)
+            except Exception:
+                pass
 
+        path_box = tk.Frame(
+            row, bg=FLUENT["input"],
+            highlightthickness=1, highlightbackground=FLUENT["border"],
+        )
+        path_box.pack(side="left", fill="x", expand=True, padx=(16, 0), ipady=4)
+        tk.Label(
+            path_box, text="CARPETA", font=f_micro,
+            fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["input"],
+        ).pack(anchor="w", padx=12, pady=(6, 0))
         self.path_lbl = tk.Label(
-            row,
-            text="  Carpeta: (ninguna seleccionada)",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"],
+            path_box,
+            text="Ninguna seleccionada",
+            font=f_cap, fg=FG_MUTED, bg=FLUENT["input"],
             anchor="w", wraplength=420, justify="left",
         )
-        self.path_lbl.pack(side="left", fill="x", expand=True, padx=(14, 0))
+        self.path_lbl.pack(fill="x", padx=12, pady=(0, 8))
 
-        # ClubRemix DJ Tools (desbloqueado en v3.2)
-        _, dj_action = self._card(body, "ClubRemix DJ Tools", ACCENT)
+        # Card DJ Tools — apariencia BLOQUEADA para el usuario (próximamente)
+        # Acceso de prueba solo con password maestro (5312), no se publicita en UI.
+        _, dj_action = self._card(
+            body, "ClubRemix DJ Tools", ACCENT,
+            subtitle="Función ClubRemix · bloqueada para usuarios (próximamente).",
+        )
         dj_row = tk.Frame(dj_action, bg=FLUENT["card"])
         dj_row.pack(fill="x")
         self.dj_btn = self.fluent.button(
-            dj_row, "  Abrir DJ Tools  ", self._open_djtools, kind="primary", width=20,
+            dj_row, "  Abrir DJ Tools  ", self._open_djtools, kind="accent", width=18,
         )
         self.dj_btn.pack(side="left")
+        try:
+            self.dj_btn.configure(font=f_btn, pady=12, padx=18)
+        except Exception:
+            try:
+                self.dj_btn.configure(font=f_btn)
+            except Exception:
+                pass
+        soon = tk.Frame(
+            dj_row, bg=FLUENT["input"],
+            highlightthickness=1, highlightbackground=FLUENT["border"],
+        )
+        soon.pack(side="left", padx=(14, 0))
+        tk.Label(
+            soon, text="  🔒 PRÓXIMAMENTE  ",
+            font=font_or_fallback(FONTS["subhead"]),
+            fg=ACCENT_ORANGE, bg=FLUENT["input"],
+        ).pack(padx=4, pady=8)
         tk.Label(
             dj_row,
-            text="Renombrar membresía · TITLE · preview · barra de progreso",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=FLUENT["card"],
+            text="Uso ClubRemix bloqueado en esta versión",
+            font=f_cap, fg=FG_MUTED, bg=FLUENT["card"],
             anchor="w",
         ).pack(side="left", fill="x", expand=True, padx=(12, 0))
 
-        # Log en card
+        # Log profesional
         log_shell = tk.Frame(
             body, bg=FLUENT["card"],
             highlightthickness=1, highlightbackground=FLUENT["border"],
         )
-        log_shell.pack(fill="both", expand=True, pady=(0, 10))
+        log_shell.pack(fill="both", expand=True, pady=(0, 12))
+        tk.Frame(log_shell, bg=ACCENT_CYAN, height=2).pack(fill="x")
         log_head = tk.Frame(log_shell, bg=FLUENT["card"])
-        log_head.pack(fill="x", padx=14, pady=(12, 6))
-        tk.Frame(log_head, bg=ACCENT_CYAN, width=3, height=14).pack(side="left", padx=(0, 8))
+        log_head.pack(fill="x", padx=16, pady=(12, 8))
         tk.Label(
-            log_head, text="Registro", font=("Segoe UI Semibold", 11),
-            fg=ACCENT_CYAN, bg=FLUENT["card"],
+            log_head, text="Registro de actividad",
+            font=f_sub, fg=FG, bg=FLUENT["card"],
         ).pack(side="left")
+        tk.Label(
+            log_head, text="EN VIVO",
+            font=f_micro, fg=ACCENT_GREEN, bg=FLUENT["card"],
+        ).pack(side="right")
         self.log = scrolledtext.ScrolledText(
             log_shell,
-            height=9,
-            font=("Consolas", 9),
-            bg=BG_INPUT, fg=FG, insertbackground=FG,
+            height=11,
+            font=f_mono,
+            bg=FLUENT["input"], fg=FG, insertbackground=FG,
             relief="flat",
             highlightthickness=0,
             state="disabled",
+            padx=10,
+            pady=10,
         )
         self.log.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
-        # Progreso — barra gradient (Fluent)
+        # ── Progreso premium (barra grande + contadores + fase) ───────────
+        prog_card = tk.Frame(
+            body, bg=FLUENT["card"],
+            highlightthickness=1, highlightbackground=FLUENT["border"],
+        )
+        prog_card.pack(fill="x")
+        tk.Frame(prog_card, bg=ACCENT, height=2).pack(fill="x")
+        prog_inner = tk.Frame(prog_card, bg=FLUENT["card"])
+        prog_inner.pack(fill="x", padx=18, pady=14)
+
+        prog_top = tk.Frame(prog_inner, bg=FLUENT["card"])
+        prog_top.pack(fill="x", pady=(0, 6))
+        left_meta = tk.Frame(prog_top, bg=FLUENT["card"])
+        left_meta.pack(side="left", fill="x", expand=True)
         tk.Label(
-            body, text="Progreso",
-            font=("Segoe UI Semibold", 9), fg=FLUENT.get("text_dim", FG_MUTED), bg=BG,
-            anchor="w",
-        ).pack(fill="x")
-        prog_row = tk.Frame(body, bg=BG)
-        prog_row.pack(fill="x", pady=(4, 0))
+            left_meta, text="PROGRESO DE LIMPIEZA",
+            font=f_micro, fg=FLUENT.get("text_dim", FG_MUTED), bg=FLUENT["card"],
+        ).pack(anchor="w")
+        self.phase_lbl = tk.Label(
+            left_meta, text="En espera",
+            font=f_sub, fg=FG, bg=FLUENT["card"],
+        )
+        self.phase_lbl.pack(anchor="w", pady=(2, 0))
+
+        right_meta = tk.Frame(prog_top, bg=FLUENT["card"])
+        right_meta.pack(side="right")
+        self.pct_lbl = tk.Label(
+            right_meta, text="0%", font=f_pct,
+            fg=ACCENT_CYAN, bg=FLUENT["card"],
+        )
+        self.pct_lbl.pack(anchor="e")
+        self.files_lbl = tk.Label(
+            right_meta, text="0 / 0 archivos",
+            font=f_cap, fg=FG_MUTED, bg=FLUENT["card"],
+        )
+        self.files_lbl.pack(anchor="e")
+
         self.prog = RoundedGradientProgress(
-            prog_row,
-            height=14,
+            prog_inner,
+            height=18,
             maximum=100,
             mode="determinate",
             colors=dict(FLUENT),
-            gradient=(ACCENT, ACCENT_CYAN),
-            bg=BG,
+            gradient=(FLUENT["accent"], FLUENT["cyan"]),
+            bg=FLUENT["card"],
+            show_glow=True,
         )
-        self.prog.pack(fill="x", side="left", expand=True)
-        self.pct_lbl = tk.Label(
-            prog_row, text="0%", font=("Segoe UI Semibold", 10),
-            fg=ACCENT_CYAN, bg=BG, width=5,
+        self.prog.pack(fill="x", pady=(4, 0))
+
+        # Segunda pista fina (detalle / sub-progreso visual)
+        self.prog_detail = RoundedGradientProgress(
+            prog_inner,
+            height=6,
+            maximum=100,
+            mode="determinate",
+            colors=dict(FLUENT),
+            gradient=(FLUENT["green"], FLUENT["cyan"]),
+            bg=FLUENT["card"],
+            show_glow=False,
         )
-        self.pct_lbl.pack(side="right", padx=(10, 0))
+        self.prog_detail.pack(fill="x", pady=(6, 0))
 
         self.status = tk.Label(
-            body,
-            text="Listo. Pulsa «Limpiar carpeta» o abre ClubRemix DJ Tools.",
-            font=("Segoe UI", 9), fg=FG_MUTED, bg=BG, anchor="w",
+            prog_inner,
+            text="Listo. Pulsa «Limpiar carpeta» para comenzar.",
+            font=f_cap, fg=FG_MUTED, bg=FLUENT["card"], anchor="w",
+            wraplength=780, justify="left",
         )
-        self.status.pack(fill="x", pady=(6, 0))
+        self.status.pack(fill="x", pady=(10, 0))
+        self._clean_total = 0
+        self._clean_current = 0
 
     # ── Updates en bienvenida ──────────────────────────────────────────────
     def _welcome_check_updates(self):
@@ -1937,26 +2306,43 @@ class CleanerXApp(tk.Tk):
         self._show_main()
 
     def _restart_after_update(self):
-        """Muestra ventana de reinicio y relanza el aplicativo."""
-        self.notify(
-            "Reiniciando aplicación",
-            "El update se aplicó correctamente.\n\n"
-            "Al pulsar OK se cerrará Cleaner X y se abrirá\n"
-            "de nuevo con la versión actualizada.\n\n"
-            "Espera un momento…",
-            kind="success",
-            buttons=[("OK — Reiniciar", "ok")],
-            on_result=lambda _k: self.after(350, restart_application),
-        )
+        """Relanza el aplicativo sin pedir confirmación y SIN abrir el panel principal."""
+        try:
+            # No mostrar interfaz de trabajo — solo mensaje de reinicio
+            self._welcome_ready = False
+            try:
+                self.main_frame.pack_forget()
+            except Exception:
+                pass
+            try:
+                self.welcome_frame.pack(fill="both", expand=True, padx=36, pady=20)
+            except Exception:
+                pass
+            self.footer_lbl.configure(text=f"v{VERSION} · reiniciando…")
+            self.welcome_status.configure(
+                text="Update aplicado. Reiniciando automáticamente…\n"
+                     "No cierres esta ventana.",
+                fg=ACCENT_GREEN,
+            )
+        except Exception:
+            pass
+        # Esperar a que se cierren handles del update y relanzar
+        self.after(900, restart_application)
 
     def _apply_update_then_start(self):
-        """Al pulsar Aplicar: abre ventana de progreso y muestra cada paso."""
+        """Al pulsar Aplicar: progreso → reinicio automático (sin UI principal)."""
         info = self._update_info
         if not info or not info.download_url:
             self._start_after_ok()
             return
 
         self._busy = True
+        # Asegurar que solo se ve bienvenida / progreso, no el panel Cleaner
+        try:
+            self.main_frame.pack_forget()
+            self._welcome_ready = False
+        except Exception:
+            pass
         remote = info.remote_version or (info.remote_sha[:7] if info.remote_sha else "?")
         try:
             self.welcome_status.configure(
@@ -1972,7 +2358,9 @@ class CleanerXApp(tk.Tk):
         self._update_win = win
         win.set_progress(1, "Conectando con el repositorio…")
         win._log_line(f"Origen: {info.source or 'GitHub'}")
+        win._log_line(f"Repo: {getattr(info, 'repo', '') or 'GitHub'}")
         win._log_line(f"URL: {(info.download_url or '')[:70]}…")
+        win._log_line("Al terminar: reinicio automático (sin abrir panel).")
 
         def on_progress(pct: int, msg: str):
             def _ui():
@@ -2008,26 +2396,39 @@ class CleanerXApp(tk.Tk):
             def done():
                 if ok:
                     try:
-                        self.welcome_status.configure(text=message, fg=ACCENT_GREEN)
-                        self.footer_lbl.configure(text=f"v{VERSION} · update listo")
+                        self.welcome_status.configure(
+                            text="Update aplicado — reiniciando automáticamente…",
+                            fg=ACCENT_GREEN,
+                        )
+                        self.footer_lbl.configure(text=f"v{VERSION} · reiniciando…")
                     except Exception:
                         pass
 
-                    def after_restart_choice():
-                        # Viene de finish_ok con "Reiniciar ahora"
+                    def after_auto_restart():
+                        # Forzar reinicio; no pasar por _start_after_ok / panel principal
                         self._restart_after_update()
-
-                    def after_later():
-                        self._start_after_ok()
 
                     try:
                         win.finish_ok(
-                            message,
-                            on_restart=after_restart_choice,
-                            on_later=after_later,
+                            message + "\nReinicio automático…",
+                            on_restart=after_auto_restart,
+                            auto_restart=True,
+                            auto_delay_ms=1200,
                         )
                     except Exception:
-                        self._restart_after_update()
+                        self.after(400, restart_application)
+                    # Failsafe: si finish_ok no dispara, reiniciar igual
+                    def _failsafe_restart():
+                        try:
+                            if self.winfo_exists():
+                                restart_application()
+                        except Exception:
+                            try:
+                                restart_application()
+                            except Exception:
+                                pass
+
+                    self.after(4500, _failsafe_restart)
                 else:
                     try:
                         self.welcome_status.configure(text=message, fg="#ff6666")
@@ -2052,6 +2453,58 @@ class CleanerXApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # ── ClubRemix DJ Tools ─────────────────────────────────────────────────
+    MASTER_PASSWORD = "5312"  # solo pruebas internas (no mostrar al usuario)
+
+    def _open_djtools(self):
+        """
+        Para el usuario final: aparece BLOQUEADO / PRÓXIMAMENTE.
+        Acceso de prueba: password maestro 5312 (diálogo sin publicitar la clave).
+        """
+        def after_pw(ok: bool):
+            if not ok:
+                try:
+                    self._append_log("DJ Tools: bloqueado (próximamente) / sin acceso.")
+                except Exception:
+                    pass
+                # Mensaje de usuario final — no mencionar password ni modo prueba
+                self.notify(
+                    "ClubRemix · Próximamente",
+                    "ClubRemix DJ Tools aún no está disponible en esta versión.\n\n"
+                    "• Renombrar con membresía\n"
+                    "• Actualizar TITLE (ffmpeg)\n\n"
+                    "Esta función se habilitará en una próxima actualización.\n"
+                    "Por ahora usa «Limpiar carpeta» con normalidad.",
+                    kind="info",
+                    buttons=[("Entendido", "ok")],
+                )
+                return
+            try:
+                self._append_log("DJ Tools: acceso de prueba autorizado.")
+            except Exception:
+                pass
+            if getattr(self, "_dj_win", None) is not None:
+                try:
+                    if self._dj_win.winfo_exists():
+                        self._dj_win.lift()
+                        self._dj_win.focus_force()
+                        return
+                except Exception:
+                    pass
+            self._dj_win = DJToolsWindow(self)
+
+        # Diálogo interno: si cancelan o fallan, ven el mensaje de bloqueado
+        MasterPasswordDialog(
+            self,
+            title="ClubRemix · Próximamente",
+            message=(
+                "Esta función está bloqueada para usuarios.\n\n"
+                "Si tienes autorización de prueba, ingresa el código de acceso:"
+            ),
+            expected=self.MASTER_PASSWORD,
+            on_result=after_pw,
+        )
+
     # ── Limpieza ───────────────────────────────────────────────────────────
     def _append_log(self, line: str):
         self.log.configure(state="normal")
@@ -2064,31 +2517,60 @@ class CleanerXApp(tk.Tk):
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
-    def _set_progress(self, value: int):
-        v = max(0, min(100, int(value)))
+    def _set_progress(
+        self,
+        value: int,
+        *,
+        current: int | None = None,
+        total: int | None = None,
+        phase: str | None = None,
+        detail_pct: int | None = None,
+    ):
+        value = max(0, min(100, int(value)))
         try:
-            self.prog.set(v)
+            self.prog.set(value)
         except Exception:
             try:
-                self.prog.configure(value=v)
+                self.prog.configure(value=value)
             except Exception:
                 pass
-        self.pct_lbl.configure(text=f"{v}%")
-
-    def _open_djtools(self):
-        """Abre ClubRemix DJ Tools (desbloqueado en v3.2)."""
         try:
-            if getattr(self, "_dj_win", None) is not None:
-                try:
-                    self._dj_win.lift()
-                    self._dj_win.focus_force()
-                    return
-                except Exception:
-                    self._dj_win = None
+            self.pct_lbl.configure(text=f"{value}%")
+            # color según avance
+            if value >= 100:
+                self.pct_lbl.configure(fg=ACCENT_GREEN)
+            elif value >= 50:
+                self.pct_lbl.configure(fg=ACCENT_CYAN)
+            else:
+                self.pct_lbl.configure(fg=ACCENT_ORANGE if value > 0 else ACCENT_CYAN)
         except Exception:
             pass
-        self._dj_win = DJToolsWindow(self)
-        self._append_log("DJ Tools: panel ClubRemix abierto.")
+        if total is not None:
+            self._clean_total = max(0, int(total))
+        if current is not None:
+            self._clean_current = max(0, int(current))
+        try:
+            self.files_lbl.configure(
+                text=f"{self._clean_current} / {self._clean_total} archivos"
+            )
+        except Exception:
+            pass
+        if phase:
+            try:
+                self.phase_lbl.configure(text=phase)
+            except Exception:
+                pass
+        if detail_pct is not None:
+            try:
+                self.prog_detail.set(max(0, min(100, int(detail_pct))))
+            except Exception:
+                pass
+        elif total and current is not None and total > 0:
+            # sub-barra = progreso dentro del lote actual
+            try:
+                self.prog_detail.set(int(current / total * 100))
+            except Exception:
+                pass
 
     def _run_once(self):
         if self._busy:
@@ -2126,10 +2608,13 @@ class CleanerXApp(tk.Tk):
 
     def _start_clean(self, folder: str):
         self._busy = True
-        self.main_btn.configure(state="disabled")
+        try:
+            self.main_btn.configure(state="disabled")
+        except Exception:
+            pass
         self.path_lbl.configure(text=f"  Carpeta: {folder}", fg=ACCENT_CYAN)
         self._clear_log()
-        self._set_progress(0)
+        self._set_progress(0, current=0, total=0, phase="Escaneando…", detail_pct=0)
         self.status.configure(text="Escaneando archivos…", fg=ACCENT_ORANGE)
         self._append_log(f"Carpeta: {folder}")
         self._append_log("Modo: 1 opción — escanear + limpiar")
@@ -2137,6 +2622,10 @@ class CleanerXApp(tk.Tk):
 
         def worker():
             try:
+                self.call_ui(
+                    self._set_progress, 2,
+                    current=0, total=0, phase="Escaneando carpeta…", detail_pct=10,
+                )
                 self.call_ui(self.status.configure, text="Escaneando…", fg=ACCENT_ORANGE)
                 archivos = cleaner.recolectar_archivos([folder])
                 audio = sum(1 for f in archivos if f.suffix.lower() in cleaner.EXT_AUDIO)
@@ -2157,11 +2646,20 @@ class CleanerXApp(tk.Tk):
                         kind="warning",
                         buttons=[("OK", "ok")],
                     )
+                    self.call_ui(
+                        self._set_progress, 0,
+                        current=0, total=0, phase="Sin archivos", detail_pct=0,
+                    )
                     self.call_ui(self.status.configure, text="Sin archivos.", fg=FG_MUTED)
                     return
 
                 self.call_ui(self._append_log, "─" * 44)
                 self.call_ui(self._append_log, "Limpiando…")
+                self.call_ui(
+                    self._set_progress, 5,
+                    current=0, total=len(archivos),
+                    phase="Limpiando archivos", detail_pct=0,
+                )
                 self.call_ui(self.status.configure, text="Limpiando…", fg=ACCENT_ORANGE)
 
                 ui = TkCleanerUI(
@@ -2175,6 +2673,10 @@ class CleanerXApp(tk.Tk):
                 self.call_ui(
                     self._append_log,
                     f"Error: {exc}\n{traceback.format_exc()}",
+                )
+                self.call_ui(
+                    self._set_progress, 0,
+                    phase="Error", detail_pct=0,
                 )
                 self.call_ui(self.status.configure, text="Error.", fg="#ff6666")
             finally:
@@ -2191,68 +2693,155 @@ def main():
     _hide_console()
     os.chdir(APP_DIR)
 
-    # Un solo root Tk: app oculta + splash Toplevel
+    # App OCULTA hasta terminar splash/boot — no mostrar panel del programa aún
     app = CleanerXApp(start_hidden=True, dep_report={})
     try:
-        app.attributes("-alpha", 0.0)
-    except tk.TclError:
+        app.withdraw()
+    except Exception:
         pass
 
-    splash = LoadingSplash(
-        APP_TITLE,
-        version=f"v{VERSION}",
-        colors=dict(FLUENT),
-        master=app,
-    )
-    splash.set_status("Preparando Cleaner X…", 5, step=0)
-    app.update_idletasks()
+    # Solo splash visible al abrir
+    splash = None
+    try:
+        splash = LoadingSplash(
+            APP_TITLE,
+            version=f"v{VERSION}",
+            colors=dict(FLUENT),
+            master=app,
+        )
+        splash.set_status("Preparando Cleaner X…", 8, step=0)
+        try:
+            app.update_idletasks()
+        except Exception:
+            pass
+    except Exception as exc:
+        _log_boot(f"splash: {exc}")
+        splash = None
+        # Sin splash: mostrar solo bienvenida (no panel principal aún)
+        try:
+            app.deiconify()
+        except Exception:
+            pass
 
     dep_report: dict = {}
     boot_error: str | None = None
+    _shown = {"done": False}
+
+    def _close_splash():
+        nonlocal splash
+        if splash is None:
+            return
+        try:
+            splash.destroy()
+        except Exception:
+            pass
+        splash = None
 
     def set_status(text: str):
-        splash.set_status(text)
+        if splash is not None:
+            try:
+                splash.set_status(text)
+            except Exception:
+                pass
         try:
             app.update_idletasks()
         except Exception:
             pass
 
     def set_progress(percent: int):
-        splash.set_status(splash.status.cget("text"), percent)
+        if splash is not None:
+            try:
+                splash.set_status(splash.status.cget("text"), percent)
+            except Exception:
+                pass
+
+    def finish_boot():
+        """Cierra splash y muestra solo bienvenida (NO el panel Cleaner aún)."""
+        if _shown["done"]:
+            return
+        _shown["done"] = True
+        _close_splash()
         try:
-            app.update_idletasks()
+            # Asegurar que el panel principal no se vea hasta OK de bienvenida
+            app._welcome_ready = False
+            try:
+                app.main_frame.pack_forget()
+            except Exception:
+                pass
+            app.reveal()  # deiconify + check updates (sigue en welcome)
+        except Exception:
+            try:
+                app.deiconify()
+                app.state("normal")
+                app.attributes("-alpha", 1.0)
+                app.lift()
+                app.focus_force()
+            except Exception:
+                pass
+        try:
+            app.refresh_dep_ui(dep_report)
         except Exception:
             pass
+        if boot_error:
+            detail = f"{boot_error}\n\n{dep_report.get('detail', '')}".strip()
+            app.after(
+                400,
+                lambda: app.notify(
+                    "Aviso de inicio",
+                    detail,
+                    kind="warning",
+                    buttons=[("OK", "ok")],
+                ),
+            )
 
-    def boot():
+    def boot_worker():
+        """Deps + motor en background (no congelar la UI)."""
         nonlocal dep_report, boot_error
         try:
-            # 1) Dependencias: revisar e instalar si faltan
-            splash.set_status("Comprobando dependencias…", 12, step=1)
-            app.update()
-            dep_report = ensure_packages(status_cb=set_status, progress_cb=set_progress)
+            def ui_status(text: str):
+                try:
+                    app.after(0, lambda t=text: set_status(t))
+                except Exception:
+                    pass
+
+            def ui_progress(percent: int):
+                try:
+                    app.after(0, lambda p=percent: set_progress(p))
+                except Exception:
+                    pass
+
+            ui_status("Comprobando dependencias…")
             try:
-                app.refresh_dep_ui(dep_report)
+                if splash is not None:
+                    app.after(0, lambda: splash.set_status("Comprobando dependencias…", 15, step=1))
+            except Exception:
+                pass
+
+            dep_report = ensure_packages(status_cb=ui_status, progress_cb=ui_progress)
+            # Activar CustomTkinter si se instaló en este boot (misma paleta Fluent)
+            try:
+                if ensure_ctk_loaded(dict(FLUENT)):
+                    def _enable_ctk_on_app():
+                        try:
+                            if getattr(app, "fluent", None) is not None:
+                                app.fluent.use_ctk = True
+                        except Exception:
+                            pass
+                    app.after(0, _enable_ctk_on_app)
+            except Exception:
+                pass
+            try:
+                app.after(0, lambda: setattr(app, "_dep_report", dep_report) or app.refresh_dep_ui(dep_report))
             except Exception:
                 app._dep_report = dep_report
 
-            if not dep_report.get("tkinter") and not getattr(sys, "frozen", False):
-                boot_error = "tkinter no disponible. Instala Python con Tcl/Tk."
-                splash.set_status(boot_error, 100, step=1)
-                app.update()
-                time.sleep(1.2)
+            ui_status("Cargando motor Cleaner…")
+            try:
+                if splash is not None:
+                    app.after(0, lambda: splash.set_status("Cargando motor Cleaner…", 75, step=2))
+            except Exception:
+                pass
 
-            # Solo avisar si falta algo crítico (mutagen); colorama/psutil son opcionales
-            if not dep_report.get("ok"):
-                left = ", ".join(m[0] for m in (dep_report.get("missing") or []) if m[0] == "mutagen")
-                if left:
-                    set_status(f"Falta: {left}")
-                else:
-                    set_status("Deps opcionales con fallback — continúa")
-
-            # 2) Motor Cleaner (tras deps)
-            splash.set_status("Cargando motor Cleaner…", 72, step=2)
-            app.update()
             try:
                 load_cleaner_module()
                 try:
@@ -2261,74 +2850,27 @@ def main():
                     app.config_data = {}
             except Exception as exc:
                 boot_error = f"No se pudo cargar el motor: {exc}"
-                splash.set_status(boot_error, 100)
-                app.update()
-                time.sleep(1.0)
+                _log_boot(boot_error)
 
-            # 3) Interfaz
-            splash.set_status("Abriendo bienvenida…", 92, step=3)
-            app.update()
-            time.sleep(0.05)
-            splash.set_status("Listo", 100, step=3)
-            app.update()
+            ui_status("Listo")
+            try:
+                if splash is not None:
+                    app.after(0, lambda: splash.set_status("Listo", 100, step=3))
+            except Exception:
+                pass
         except Exception as exc:
             boot_error = str(exc)
+            _log_boot(f"boot: {exc}")
+        finally:
             try:
-                splash.set_status(f"Error: {exc}", 100)
+                app.after(100, finish_boot)
             except Exception:
                 pass
 
-        def show_app():
-            if boot_error or not dep_report.get("ok", True):
-                detail = (boot_error or "Algunas dependencias no están completas.")
-                detail = f"{detail}\n\n{dep_report.get('detail', '')}".strip()
-
-                def after_dep_warn(_k):
-                    app.after(200, app._welcome_check_updates)
-
-                def reveal_and_warn():
-                    try:
-                        app.attributes("-alpha", 0.0)
-                    except tk.TclError:
-                        pass
-                    app.deiconify()
-                    app.lift()
-                    try:
-                        fade_in_window(app, steps=12, delay_ms=16)
-                    except Exception:
-                        try:
-                            app.attributes("-alpha", 1.0)
-                        except tk.TclError:
-                            pass
-                    app.after(
-                        350,
-                        lambda: app.notify(
-                            "Dependencias",
-                            detail,
-                            kind="warning",
-                            buttons=[("OK", "ok")],
-                            on_result=after_dep_warn,
-                        ),
-                    )
-
-                reveal_and_warn()
-            else:
-                app.reveal()
-
-        try:
-            if hasattr(splash, "fade_out_and_destroy"):
-                splash.fade_out_and_destroy(on_done=show_app)
-            else:
-                splash.destroy()
-                show_app()
-        except Exception:
-            try:
-                splash.destroy()
-            except Exception:
-                pass
-            show_app()
-
-    app.after(60, boot)
+    # Failsafe: si el boot se cuelga, mostrar la app a los 6s
+    app.after(6000, finish_boot)
+    # Arrancar worker sin bloquear mainloop
+    app.after(50, lambda: threading.Thread(target=boot_worker, daemon=True).start())
     app.mainloop()
 
 

@@ -1,0 +1,21 @@
+RemixZ Cleaner X v3.5.0
+=======================
+
+Ejecutar (sin CMD):
+  doble clic en ejecutar_Cleaner_X.vbs
+
+O con Python:
+  pythonw RemixZ_Cleaner_X_App.py
+
+v3.5.0
+  - Progress bar premium en panel de limpieza (doble barra, %, archivos, fase)
+  - Tipografías mejoradas (Segoe UI / Cascadia Mono)
+  - CustomTkinter + darkdetect + packaging (auto-instalación si faltan)
+  - Diseño Fluent mantenido
+
+Deps (se instalan solas):
+  mutagen, colorama, psutil, customtkinter, darkdetect, packaging
+
+Repo updates:
+  https://github.com/alikhan847547-sketch/remixz
+  https://github.com/SMPROJECT115/remixz

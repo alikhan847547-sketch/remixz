@@ -1,20 +1,17 @@
-RemixZ Cleaner X v3.3.0
+RemixZ Cleaner X v3.4.1
 =======================
 
-Novedades v3.3.0
-----------------
-- Barra de progreso visual (gradient) en limpieza, updates y DJ Tools
-- ClubRemix DJ Tools desbloqueado y mejorado:
-  * Renombrar con membresía (mes/año elegibles)
-  * Preview / dry-run antes de renombrar
-  * Actualizar TITLE con ffmpeg o mutagen (fallback)
-  * Progreso en vivo archivo a archivo
-  * Opción subcarpetas
+Diseño: Fluent (igual que antes) + CustomTkinter en botones/entries.
 
-Ejecutar
---------
-  RemixZ_Cleaner_X.exe
+Ejecutar:
+  ejecutar_Cleaner_X.vbs
   o: pythonw RemixZ_Cleaner_X_App.py
-  o: ejecutar_Cleaner_X.vbs
 
-Repos: alikhan847547-sketch/remixz (+ mirror SMPROJECT115/remixz)
+Stack UI:
+  - fluent_ui.py  → layout, cards, splash, progreso, animaciones
+  - customtkinter → botones redondeados / entries (misma paleta)
+  - colorama      → solo motor/consola
+  - easygui       → NO en la UI principal (rompe el diseño)
+
+Deps auto: mutagen, colorama, psutil, customtkinter
+Repo: https://github.com/alikhan847547-sketch/remixz

@@ -1,9 +1,25 @@
-"""Componentes UI estilo Fluent Design (Windows 11) con efectos y transiciones."""
+"""Componentes UI estilo Fluent Design (Windows 11) con efectos y transiciones.
+
+Mejoras opcionales con CustomTkinter (misma paleta FLUENT):
+  botones redondeados, entries modernos. Si CTk no está, cae a tk puro.
+EasyGUI no se usa aquí: rompe el diseño unificado.
+Colorama es solo para consola/motor (fuera de este módulo).
+"""
 
 from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
+from typing import Any
+
+# CustomTkinter opcional (mismo diseño dark, widgets redondeados)
+try:
+    import customtkinter as ctk  # type: ignore
+
+    HAS_CTK = True
+except Exception:  # pragma: no cover
+    ctk = None  # type: ignore
+    HAS_CTK = False
 
 
 # Paleta profesional (dark SaaS / dashboard)
@@ -36,6 +52,85 @@ FLUENT = {
     "text_dim": "#6b7c90",
     "divider": "#1e2836",
 }
+
+_CTK_THEME_APPLIED = False
+
+
+def apply_ctk_theme(colors: dict | None = None) -> bool:
+    """
+    Configura CustomTkinter en modo dark con la paleta FLUENT.
+    No cambia el layout de la app: solo el look de widgets CTk.
+    """
+    global _CTK_THEME_APPLIED
+    if not HAS_CTK or ctk is None:
+        return False
+    c = {**FLUENT, **(colors or {})}
+    try:
+        ctk.set_appearance_mode("Dark")
+        # Tema base + overrides por widget (fg_color etc. en cada control)
+        try:
+            ctk.set_default_color_theme("blue")
+        except Exception:
+            pass
+        # Inyectar colores en ThemeManager si está disponible (CTk 5/6)
+        try:
+            theme = ctk.ThemeManager.theme
+            if "CTk" in theme:
+                theme["CTk"]["fg_color"] = [c["bg"], c["bg"]]
+            if "CTkFrame" in theme:
+                theme["CTkFrame"]["fg_color"] = [c["card"], c["card"]]
+                theme["CTkFrame"]["top_fg_color"] = [c["surface"], c["surface"]]
+                theme["CTkFrame"]["border_color"] = [c["border"], c["border"]]
+            if "CTkButton" in theme:
+                theme["CTkButton"]["fg_color"] = [c["accent"], c["accent"]]
+                theme["CTkButton"]["hover_color"] = [c["accent_hover"], c["accent_hover"]]
+                theme["CTkButton"]["text_color"] = ["#ffffff", "#ffffff"]
+                theme["CTkButton"]["border_color"] = [c["border"], c["border"]]
+            if "CTkEntry" in theme:
+                theme["CTkEntry"]["fg_color"] = [c["input"], c["input"]]
+                theme["CTkEntry"]["border_color"] = [c["border"], c["border"]]
+                theme["CTkEntry"]["text_color"] = [c["fg"], c["fg"]]
+                theme["CTkEntry"]["placeholder_text_color"] = [c["muted"], c["muted"]]
+            if "CTkProgressBar" in theme:
+                theme["CTkProgressBar"]["fg_color"] = [c["input"], c["input"]]
+                theme["CTkProgressBar"]["progress_color"] = [c["accent"], c["cyan"]]
+            if "CTkLabel" in theme:
+                theme["CTkLabel"]["text_color"] = [c["fg"], c["fg"]]
+            if "CTkTextbox" in theme:
+                theme["CTkTextbox"]["fg_color"] = [c["input"], c["input"]]
+                theme["CTkTextbox"]["text_color"] = [c["fg"], c["fg"]]
+                theme["CTkTextbox"]["border_color"] = [c["border"], c["border"]]
+        except Exception:
+            pass
+        _CTK_THEME_APPLIED = True
+        return True
+    except Exception:
+        return False
+
+
+def ctk_available() -> bool:
+    return bool(HAS_CTK)
+
+
+def ensure_ctk_loaded(colors: dict | None = None) -> bool:
+    """
+    Reintenta importar CustomTkinter tras ensure_packages (boot).
+    Si se instaló en caliente, activa CTk sin reiniciar el proceso.
+    """
+    global ctk, HAS_CTK
+    if HAS_CTK and ctk is not None:
+        if not _CTK_THEME_APPLIED:
+            apply_ctk_theme(colors)
+        return True
+    try:
+        import customtkinter as _ctk  # type: ignore
+
+        ctk = _ctk
+        HAS_CTK = True
+        apply_ctk_theme(colors)
+        return True
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -184,42 +279,76 @@ def apply_fluent_style(root: tk.Misc) -> ttk.Style:
     return style
 
 
+# Tipografías unificadas (Windows: Segoe UI / Cascadia)
+FONTS = {
+    "title": ("Segoe UI Black", 22),
+    "title_sm": ("Segoe UI Black", 16),
+    "heading": ("Segoe UI Semibold", 13),
+    "subhead": ("Segoe UI Semibold", 11),
+    "body": ("Segoe UI", 10),
+    "body_lg": ("Segoe UI", 11),
+    "caption": ("Segoe UI", 9),
+    "micro": ("Segoe UI", 8),
+    "mono": ("Cascadia Mono", 10),
+    "mono_sm": ("Cascadia Mono", 9),
+    "btn": ("Segoe UI Semibold", 11),
+    "pct": ("Segoe UI Black", 14),
+    "brand": ("Segoe UI Black", 13),
+}
+
+
+def font_or_fallback(preferred: tuple, fallback_family: str = "Segoe UI") -> tuple:
+    """Devuelve la fuente preferida; si falla, misma talla con fallback."""
+    try:
+        family, size = preferred[0], preferred[1]
+        extra = preferred[2:] if len(preferred) > 2 else ()
+        # Validación ligera: tk acepta nombres aunque no existan y sustituye
+        return (family, size, *extra) if extra else (family, size)
+    except Exception:
+        return (fallback_family, 10)
+
+
 class RoundedGradientProgress(tk.Canvas):
     """
     Barra de progreso redondeada (pill) con relleno en degradado.
     API compatible con ttk: configure(value=), start()/stop(), ['value'].
+    Mejoras: altura mayor, glow suave, set animado opcional.
     """
 
     def __init__(
         self,
         parent,
         *,
-        height: int = 12,
+        height: int = 16,
         maximum: float = 100,
         mode: str = "determinate",
         colors: dict | None = None,
         gradient: tuple[str, str] | None = None,
         trough: str | None = None,
         bg: str | None = None,
+        show_glow: bool = True,
         **pack_ignore,
     ):
         c = {**FLUENT, **(colors or {})}
         self._c = c
-        self._height = max(8, int(height))
+        self._height = max(10, int(height))
         self._maximum = max(1.0, float(maximum))
         self._value = 0.0
         self._mode = mode  # determinate | indeterminate
         self._grad = gradient or (c["accent"], c["cyan"])
         self._trough = trough or c["input"]
         self._track_border = c.get("border", "#2a3545")
+        self._show_glow = bool(show_glow)
         self._indeterminate = False
         self._ind_job = None
         self._ind_pos = 0.0
         self._ind_dir = 1.0
+        self._anim_job = None
         canvas_bg = bg or c.get("card") or c["bg"]
+        # +8 px para glow superior/inferior
         super().__init__(
             parent,
-            height=self._height + 4,
+            height=self._height + (10 if self._show_glow else 4),
             bg=canvas_bg,
             highlightthickness=0,
             bd=0,
@@ -264,10 +393,41 @@ class RoundedGradientProgress(tk.Canvas):
             return self._mode
         return super().__getitem__(key)
 
-    def set(self, value: float) -> None:
-        self._value = max(0.0, min(self._maximum, float(value)))
-        if not self._indeterminate:
+    def set(self, value: float, *, animate: bool = True) -> None:
+        target = max(0.0, min(self._maximum, float(value)))
+        if self._anim_job is not None:
+            try:
+                self.after_cancel(self._anim_job)
+            except Exception:
+                pass
+            self._anim_job = None
+        if not animate or self._indeterminate:
+            self._value = target
+            if not self._indeterminate:
+                self._redraw()
+            return
+        start = self._value
+        if abs(target - start) < 0.15:
+            self._value = target
             self._redraw()
+            return
+        steps = 8
+
+        def tick(i: int = 0):
+            t = ease_out_cubic(i / max(steps - 1, 1))
+            self._value = start + (target - start) * t
+            self._redraw()
+            if i < steps - 1:
+                try:
+                    self._anim_job = self.after(14, lambda: tick(i + 1))
+                except tk.TclError:
+                    self._anim_job = None
+            else:
+                self._value = target
+                self._anim_job = None
+                self._redraw()
+
+        tick(0)
 
     def get(self) -> float:
         return self._value
@@ -366,25 +526,37 @@ class RoundedGradientProgress(tk.Canvas):
             return
         self.delete("all")
         w = max(self.winfo_width(), 40)
-        h_total = self.winfo_height() or (self._height + 4)
-        pad_y = max(1, (h_total - self._height) // 2)
-        pad_x = 2
+        h_total = self.winfo_height() or (self._height + 10)
+        pad_y = max(2, (h_total - self._height) // 2)
+        pad_x = 3
         x1, y1 = pad_x, pad_y
         x2, y2 = w - pad_x, pad_y + self._height
 
-        # Track (fondo pill)
-        self._rounded_pill(x1, y1, x2, y2, self._trough, "trough")
-        # borde sutil exterior
-        # (sin outline nativo; se ve limpio sobre cards)
-
         g0, g1 = self._grad
-        # highlight secundario al final del degradado (cyan → acento claro)
         g_mid = lerp_color(g0, g1, 0.55)
 
+        # Glow suave bajo la barra (diseño más premium)
+        if self._show_glow:
+            try:
+                glow = lerp_color(g0, self._c.get("bg", "#0b0f14"), 0.55)
+                gy = y1 + 2
+                self._rounded_pill(x1 + 2, gy, x2 - 2, y2 + 3, glow, "glow")
+            except Exception:
+                pass
+
+        # Track (fondo pill)
+        self._rounded_pill(x1, y1, x2, y2, self._trough, "trough")
+        # borde sutil
+        try:
+            border = self._track_border
+            self.create_line(x1 + self._height / 2, y1, x2 - self._height / 2, y1, fill=border, width=1, tags="edge")
+            self.create_line(x1 + self._height / 2, y2, x2 - self._height / 2, y2, fill=border, width=1, tags="edge")
+        except Exception:
+            pass
+
         if self._indeterminate:
-            # bloque móvil ~28% del ancho
             track_w = x2 - x1
-            block = max(track_w * 0.28, self._height * 2)
+            block = max(track_w * 0.30, self._height * 2.2)
             max_off = max(track_w - block, 0)
             off = max_off * self._ind_pos
             bx1 = x1 + off
@@ -395,15 +567,13 @@ class RoundedGradientProgress(tk.Canvas):
             pct = max(0.0, min(1.0, pct))
             fill_w = (x2 - x1) * pct
             if fill_w >= 1:
-                # si es muy pequeña, pill sólido con color medio
                 if fill_w < self._height:
                     self._rounded_pill(x1, y1, x1 + fill_w, y2, g_mid, "fill")
                 else:
                     self._gradient_pill(x1, y1, x1 + fill_w, y2, g0, g1, "fill")
-                    # brillo superior sutil (línea semi-clara)
                     try:
-                        shine = lerp_color(g1, "#ffffff", 0.35)
-                        mid_y = y1 + 1
+                        shine = lerp_color(g1, "#ffffff", 0.40)
+                        mid_y = y1 + max(1, self._height // 4)
                         self.create_line(
                             x1 + self._height / 2,
                             mid_y,
@@ -424,6 +594,9 @@ class FluentUI:
         self.c = {**FLUENT, **(colors or {})}
         self.root = root
         self.anim = Animator(root) if root is not None else None
+        self.use_ctk = HAS_CTK
+        if self.use_ctk and not _CTK_THEME_APPLIED:
+            apply_ctk_theme(self.c)
 
     def set_root(self, root: tk.Misc) -> None:
         self.root = root
@@ -754,10 +927,32 @@ class FluentUI:
         chip.bind("<Leave>", on_leave)
         return val
 
-    def entry(self, parent, **kwargs) -> tk.Entry:
+    def entry(self, parent, **kwargs) -> Any:
+        """Entry moderno (CTk si hay) o tk.Entry, misma paleta FLUENT."""
+        if self.use_ctk and ctk is not None:
+            # Separar kwargs solo-tk
+            show = kwargs.pop("show", None)
+            font = kwargs.pop("font", ("Segoe UI", 12))
+            try:
+                e = ctk.CTkEntry(
+                    parent,
+                    font=font if isinstance(font, (tuple, ctk.CTkFont)) else ("Segoe UI", 12),
+                    fg_color=self.c["input"],
+                    border_color=self.c["border"],
+                    text_color=self.c["fg"],
+                    placeholder_text_color=self.c["muted"],
+                    corner_radius=8,
+                    border_width=1,
+                    height=36,
+                    show=show,
+                )
+                return e
+            except Exception:
+                pass  # fallback tk
+
         e = tk.Entry(
             parent,
-            font=("Segoe UI", 10),
+            font=kwargs.pop("font", ("Segoe UI", 10)),
             bg=self.c["input"],
             fg=self.c["fg"],
             insertbackground=self.c["fg"],
@@ -814,7 +1009,11 @@ class FluentUI:
         *,
         kind: str = "subtle",
         width: int | None = None,
-    ) -> tk.Button:
+    ) -> Any:
+        """
+        Botón Fluent. Con CustomTkinter: esquinas redondeadas + hover nativo.
+        Sin CTk: tk.Button con micro-animación (diseño idéntico en colores).
+        """
         c = self.c
         styles = {
             "accent": (c["accent"], c["accent_hover"], "#ffffff"),
@@ -825,6 +1024,31 @@ class FluentUI:
             "ghost": (c["card"], c["card_hover"], c["fg"]),
         }
         bg, hbg, fg = styles.get(kind, styles["subtle"])
+        border = c["border"] if kind in ("standard", "subtle", "ghost") else bg
+
+        if self.use_ctk and ctk is not None:
+            # width en CTk es px; en la app se pasa en "caracteres" (~10px/char)
+            px_w = max(120, int(width) * 10) if width else None
+            try:
+                btn = ctk.CTkButton(
+                    parent,
+                    text=text,
+                    command=command,
+                    font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                    fg_color=bg,
+                    hover_color=hbg,
+                    text_color=fg,
+                    border_color=border,
+                    border_width=1 if kind in ("standard", "subtle", "ghost") else 0,
+                    corner_radius=10,
+                    height=40,
+                    width=px_w if px_w else 140,
+                    cursor="hand2",
+                )
+                return btn
+            except Exception:
+                pass  # fallback tk
+
         btn = tk.Button(
             parent,
             text=text,
@@ -837,7 +1061,7 @@ class FluentUI:
             relief="flat",
             bd=0,
             highlightthickness=1,
-            highlightbackground=c["border"] if kind in ("standard", "subtle", "ghost") else bg,
+            highlightbackground=border,
             highlightcolor=c["border_hot"],
             padx=18,
             pady=10,
