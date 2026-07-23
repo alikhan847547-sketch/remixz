@@ -2860,6 +2860,35 @@ def main():
             except Exception as exc:
                 _log_boot(f"pending_on_boot FAIL: {exc}")
 
+            # Soft bootstrap (3.1.5 → soft sin EXE) → bajar FULL en el loading
+            try:
+                ui_status("Comprobando paquete completo…")
+                if splash is not None:
+                    app.after(
+                        0,
+                        lambda: splash.set_status(
+                            "Descargando paquete completo…", 12, step=0
+                        ),
+                    )
+
+                def _full_status(msg: str):
+                    ui_status(msg)
+
+                def _full_progress(pct: int, msg: str = ""):
+                    mapped = 12 + int(max(0, min(100, pct)) * 0.08)
+                    ui_progress(mapped)
+                    if msg:
+                        ui_status(msg)
+
+                ok_f, msg_f = remixz_update.ensure_full_package_on_boot(
+                    APP_DIR,
+                    progress_cb=_full_progress,
+                    status_cb=_full_status,
+                )
+                _log_boot(f"full_on_boot: ok={ok_f} {msg_f}")
+            except Exception as exc:
+                _log_boot(f"full_on_boot FAIL: {exc}")
+
             ui_status("Comprobando dependencias…")
             try:
                 if splash is not None:

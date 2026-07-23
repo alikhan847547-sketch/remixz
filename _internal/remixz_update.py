@@ -771,6 +771,103 @@ def apply_pending_on_boot(
     return True, msg
 
 
+def ensure_full_package_on_boot(
+    app_dir: Path | None = None,
+    progress_cb: Callable | None = None,
+    status_cb: Callable | None = None,
+) -> tuple[bool, str]:
+    """
+    Tras un bootstrap SOFT (sin EXE/DLL), en el loading descarga el paquete
+    COMPLETO desde el repo full y lo aplica con copia segura.
+
+    Así el flujo desde 3.1.5 es:
+      1) actualizador viejo aplica SOFT (solo .py) sin WinError 32
+      2) reinicio → updater nuevo → aquí baja FULL (EXE+_internal)
+    """
+    base = Path(app_dir) if app_dir is not None else _app_dir()
+
+    def report(msg: str, pct: int | None = None):
+        if status_cb:
+            try:
+                status_cb(msg)
+            except Exception:
+                pass
+        if progress_cb and pct is not None:
+            try:
+                progress_cb(max(0, min(100, int(pct))), msg)
+            except Exception:
+                pass
+
+    local = load_local_version(base)
+    pkg_type = str(local.get("package_type") or "").strip().lower()
+    exe_path = base / "RemixZ_Cleaner_X.exe"
+    needs_full = pkg_type in ("soft_bootstrap", "soft", "bootstrap") or (
+        getattr(__import__("sys"), "frozen", False) and not exe_path.exists()
+    )
+    # También si el EXE es muy viejo y pedimos full tras soft
+    if not needs_full and pkg_type == "soft_bootstrap":
+        needs_full = True
+    if not needs_full:
+        return True, "Paquete completo ya instalado."
+
+    # Repos de paquete FULL (prioridad)
+    full_repos = [
+        "SMPROJECT115/newrepo",
+        "SMPROJECT115/remixz",
+        "alikhan847547-sketch/remixz",
+    ]
+    for r in local.get("repos") or []:
+        n = str(r).strip()
+        if n and n not in full_repos:
+            full_repos.append(n)
+
+    report("Bootstrap soft → descargando paquete completo…", 5)
+    last_err = ""
+    for repo in full_repos:
+        for br in ("main", "master"):
+            url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
+            info = UpdateInfo(
+                available=True,
+                ready=True,
+                message=f"Full package from {repo}",
+                remote_version=str(local.get("version") or "3.5.6"),
+                local_version=str(local.get("version") or "0"),
+                source="version.json",
+                download_url=url,
+                repo=repo,
+                repo_url=f"https://github.com/{repo}",
+            )
+            try:
+                report(f"Descargando completo desde {repo}…", 10)
+                ok, msg = apply_update(
+                    info,
+                    app_dir=base,
+                    progress_cb=progress_cb,
+                    status_cb=status_cb,
+                )
+                if ok:
+                    # Marcar como full
+                    try:
+                        data = load_local_version(base)
+                        data["package_type"] = "full"
+                        data["last_update"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                        if not data.get("version") or data.get("version") == local.get("version"):
+                            # si el zip soft no traía version más alta, subir a full label
+                            data["version"] = str(data.get("version") or "3.5.6")
+                        data["repo"] = repo
+                        data["repo_url"] = f"https://github.com/{repo}"
+                        save_local_version(data, base)
+                    except Exception:
+                        pass
+                    report(f"Paquete completo aplicado ({repo}).", 100)
+                    return True, msg
+                last_err = msg
+            except Exception as exc:
+                last_err = str(exc)
+                continue
+    return False, f"No se pudo bajar paquete completo: {last_err}"
+
+
 def launch_finish_update_and_exit(
     app_dir: Path | None = None,
     restart_cmd: list[str] | None = None,
