@@ -1,23 +1,8 @@
 {
-  "last_update": "2026-07-23 12:14:09",
+  "last_update": "2026-07-23 12:21:40",
   "package_type": "full",
-  "repo_secondary": "SMPROJECT115/remixz",
-  "channel": "stable",
-  "notes": "v3.5.6 FULL. ensure_full fija version remota; soft->full in-app.",
+  "version": "3.5.7",
   "app": "RemixZ Cleaner X",
-  "repo_url": "https://github.com/SMPROJECT115/newrepo",
-  "build": "2026-07-23",
-  "repos": [
-    "SMPROJECT115/newrepo",
-    "SMPROJECT115/remixz",
-    "SMPROJECT115/3.15",
-    "alikhan847547-sketch/remixz"
-  ],
-  "repo": "SMPROJECT115/newrepo",
-  "updates_enabled": true,
-  "version": "3.5.6",
-  "update_branch": "main",
-  "ui": "fluent+customtkinter",
   "dependencies": [
     "mutagen",
     "colorama",
@@ -25,5 +10,21 @@
     "customtkinter",
     "darkdetect",
     "packaging"
-  ]
+  ],
+  "repo": "SMPROJECT115/newrepo",
+  "update_branch": "main",
+  "repo_url": "https://github.com/SMPROJECT115/newrepo",
+  "repos": [
+    "SMPROJECT115/newrepo",
+    "SMPROJECT115/remixz",
+    "SMPROJECT115/3.15",
+    "alikhan847547-sketch/remixz"
+  ],
+  "channel": "stable",
+  "requirements_file": "requirements_cleaner.txt",
+  "repo_secondary": "SMPROJECT115/remixz",
+  "build": "2026-07-23",
+  "ui": "fluent+customtkinter",
+  "updates_enabled": true,
+  "notes": "v3.5.7 FULL = Export_20260722 + lib completa (mutagen/psutil/customtkinter/…). Auto-install requirements al loading."
 }
