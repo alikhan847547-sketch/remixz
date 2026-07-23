@@ -18,7 +18,10 @@ Paquete unificado (incluye todo lo de la línea 3.3).
 | Rol | URL |
 |-----|-----|
 | Principal | https://github.com/alikhan847547-sketch/remixz |
-| Secundario | https://github.com/SMPROJECT115/remixz |
+| Secundario (updates) | https://github.com/SMPROJECT115/newrepo |
+| Mirror legacy | https://github.com/SMPROJECT115/remixz |
+
+Al publicar con `push_to_github.ps1`, el contenido se sube a **todos** los mirrors (incluido `newrepo`).
 
 ## Ejecutar en local
 
@@ -40,4 +43,4 @@ O doble clic en `RemixZ_Cleaner_X.exe` (build portable).
 powershell -ExecutionPolicy Bypass -File .\push_to_github.ps1
 ```
 
-(Requiere `GITHUB_TOKEN` con acceso a ambos repos.)
+(Requiere `GITHUB_TOKEN` con acceso a los repos: principal + `SMPROJECT115/newrepo` + mirror legacy.)

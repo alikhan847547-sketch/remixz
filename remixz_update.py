@@ -3,16 +3,17 @@
 """
 RemixZ Updater — comprueba y aplica updates desde GitHub.
 
-Se mantienen DOS repositorios (mirror / respaldo):
+Se mantienen repositorios mirror / respaldo:
   1) https://github.com/alikhan847547-sketch/remixz   (principal)
-  2) https://github.com/SMPROJECT115/remixz           (secundario)
+  2) https://github.com/SMPROJECT115/newrepo          (secundario / updates)
+  3) https://github.com/SMPROJECT115/remixz           (mirror legacy)
 
 Prioridad de detección por cada repo:
   1) Releases (tag / assets)
   2) version.json en la rama principal
   3) Último commit SHA (cuando el repo tenga contenido)
 
-Se elige el update con la versión más nueva entre ambos.
+Se elige el update con la versión más nueva entre todos.
 No fuerza update si los repositorios están vacíos.
 """
 
@@ -36,6 +37,7 @@ from typing import Any, Callable
 # Repos mantenidos en paralelo (orden = prioridad de consulta)
 REPOS: tuple[str, ...] = (
     "alikhan847547-sketch/remixz",
+    "SMPROJECT115/newrepo",
     "SMPROJECT115/remixz",
 )
 REPO = REPOS[0]  # principal (compat)
