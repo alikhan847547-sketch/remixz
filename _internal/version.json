@@ -3,7 +3,7 @@
   "package_type": "full",
   "repo_secondary": "SMPROJECT115/remixz",
   "channel": "stable",
-  "notes": "v3.5.6 FULL EXE+_internal+lib. Safe update WinError32 + pending/full on boot.",
+  "notes": "v3.5.6 FULL. ensure_full fija version remota; soft->full in-app.",
   "app": "RemixZ Cleaner X",
   "repo_url": "https://github.com/SMPROJECT115/newrepo",
   "build": "2026-07-23",

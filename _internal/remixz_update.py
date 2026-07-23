@@ -801,36 +801,77 @@ def ensure_full_package_on_boot(
     local = load_local_version(base)
     pkg_type = str(local.get("package_type") or "").strip().lower()
     exe_path = base / "RemixZ_Cleaner_X.exe"
-    needs_full = pkg_type in ("soft_bootstrap", "soft", "bootstrap") or (
-        getattr(__import__("sys"), "frozen", False) and not exe_path.exists()
-    )
-    # También si el EXE es muy viejo y pedimos full tras soft
-    if not needs_full and pkg_type == "soft_bootstrap":
-        needs_full = True
+    needs_full = pkg_type in ("soft_bootstrap", "soft", "bootstrap")
     if not needs_full:
         return True, "Paquete completo ya instalado."
 
-    # Repos de paquete FULL (prioridad)
+    # Solo repos de paquete FULL (prioridad). No re-bajar soft de remixz/3.15.
     full_repos = [
         "SMPROJECT115/newrepo",
-        "SMPROJECT115/remixz",
-        "alikhan847547-sketch/remixz",
     ]
     for r in local.get("repos") or []:
         n = str(r).strip()
-        if n and n not in full_repos:
-            full_repos.append(n)
+        if n and n not in full_repos and "3.15" not in n:
+            # remixz/alikhan pueden ser soft; newrepo es full
+            if n.endswith("/newrepo") or n not in (
+                "SMPROJECT115/remixz",
+                "SMPROJECT115/3.15",
+                "alikhan847547-sketch/remixz",
+            ):
+                full_repos.append(n)
+    # newrepo primero siempre
+    full_repos = list(dict.fromkeys(full_repos))
 
     report("Bootstrap soft → descargando paquete completo…", 5)
     last_err = ""
     for repo in full_repos:
         for br in ("main", "master"):
+            # Leer version.json remoto para no copiar un soft por error
+            remote_ver = ""
+            remote_type = ""
+            for ver_url in (
+                f"https://raw.githubusercontent.com/{repo}/{br}/version.json",
+                f"https://cdn.jsdelivr.net/gh/{repo}@{br}/version.json",
+            ):
+                try:
+                    code, body = _http_get_json(ver_url)
+                    if code == 200 and isinstance(body, dict):
+                        remote_ver = str(body.get("version") or "").lstrip("vV")
+                        remote_type = str(body.get("package_type") or "").lower()
+                        break
+                except Exception:
+                    continue
+            # raw.githubusercontent a veces no es JSON vía _http_get_json (Accept github)
+            if not remote_ver:
+                try:
+                    import urllib.request as _ur
+
+                    req = _ur.Request(
+                        f"https://raw.githubusercontent.com/{repo}/{br}/version.json",
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                    with _ur.urlopen(req, timeout=20) as resp:
+                        raw = resp.read().decode("utf-8", errors="replace")
+                        body = json.loads(raw)
+                        remote_ver = str(body.get("version") or "").lstrip("vV")
+                        remote_type = str(body.get("package_type") or "").lower()
+                except Exception as exc:
+                    last_err = f"{repo}: version.json {exc}"
+                    continue
+
+            if remote_type in ("soft_bootstrap", "soft", "bootstrap"):
+                last_err = f"{repo}: es soft, se omite"
+                continue
+
+            if not remote_ver:
+                remote_ver = "3.5.6"
+
             url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
             info = UpdateInfo(
                 available=True,
                 ready=True,
                 message=f"Full package from {repo}",
-                remote_version=str(local.get("version") or "3.5.6"),
+                remote_version=remote_ver,
                 local_version=str(local.get("version") or "0"),
                 source="version.json",
                 download_url=url,
@@ -838,7 +879,7 @@ def ensure_full_package_on_boot(
                 repo_url=f"https://github.com/{repo}",
             )
             try:
-                report(f"Descargando completo desde {repo}…", 10)
+                report(f"Descargando completo v{remote_ver} desde {repo}…", 10)
                 ok, msg = apply_update(
                     info,
                     app_dir=base,
@@ -846,20 +887,31 @@ def ensure_full_package_on_boot(
                     status_cb=status_cb,
                 )
                 if ok:
-                    # Marcar como full
                     try:
                         data = load_local_version(base)
                         data["package_type"] = "full"
+                        data["version"] = remote_ver
                         data["last_update"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                        if not data.get("version") or data.get("version") == local.get("version"):
-                            # si el zip soft no traía version más alta, subir a full label
-                            data["version"] = str(data.get("version") or "3.5.6")
                         data["repo"] = repo
                         data["repo_url"] = f"https://github.com/{repo}"
+                        data["repos"] = list(
+                            dict.fromkeys(
+                                [repo, "SMPROJECT115/newrepo", "SMPROJECT115/remixz", "SMPROJECT115/3.15"]
+                                + list(data.get("repos") or [])
+                            )
+                        )
                         save_local_version(data, base)
+                        try:
+                            if (base / "_internal").is_dir():
+                                (base / "_internal" / "version.json").write_text(
+                                    json.dumps(data, indent=4, ensure_ascii=False) + "\n",
+                                    encoding="utf-8",
+                                )
+                        except Exception:
+                            pass
                     except Exception:
                         pass
-                    report(f"Paquete completo aplicado ({repo}).", 100)
+                    report(f"Paquete completo v{remote_ver} aplicado ({repo}).", 100)
                     return True, msg
                 last_err = msg
             except Exception as exc:
