@@ -1,20 +1,17 @@
 {
+  "build": "2026-07-23",
+  "ui": "fluent+customtkinter",
   "version": "3.5.2",
   "app": "RemixZ Cleaner X",
-  "channel": "stable",
-  "build": "2026-07-23",
-  "last_update": "2026-07-23 10:38:08",
-  "updates_enabled": true,
-  "update_branch": "main",
-  "repo": "SMPROJECT115/remixz",
-  "repo_url": "https://github.com/SMPROJECT115/remixz",
-  "repo_secondary": "alikhan847547-sketch/remixz",
+  "repo_secondary": "SMPROJECT115/newrepo",
+  "last_update": "2026-07-23 11:39:24",
   "repos": [
     "SMPROJECT115/remixz",
+    "SMPROJECT115/newrepo",
     "alikhan847547-sketch/remixz"
   ],
-  "ui": "fluent+customtkinter",
-  "notes": "v3.5.2 — Sync completo root+_internal: CustomTkinter, progress bar premium, fuentes. Fix EXE que usaba _internal viejo.",
+  "repo": "SMPROJECT115/remixz",
+  "updates_enabled": true,
   "dependencies": [
     "mutagen",
     "colorama",
@@ -22,6 +19,9 @@
     "customtkinter",
     "darkdetect",
     "packaging"
-  ]
+  ],
+  "repo_url": "https://github.com/SMPROJECT115/remixz",
+  "update_branch": "main",
+  "channel": "stable",
+  "notes": "v3.5.2 — Desktop sync: diseño Fluent+CTk, root+_internal+EXE+lib alineados."
 }
-

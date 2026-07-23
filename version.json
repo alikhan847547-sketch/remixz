@@ -1,17 +1,17 @@
 {
-  "repos": [
-    "SMPROJECT115/newrepo",
-    "SMPROJECT115/remixz",
-    "alikhan847547-sketch/remixz"
-  ],
-  "channel": "stable",
   "build": "2026-07-23",
   "ui": "fluent+customtkinter",
-  "notes": "v3.5.2 — Export completo 20260722 (root+_internal+EXE). CustomTkinter, progress bar, fuentes. Sync SM newrepo.",
-  "repo_secondary": "SMPROJECT115/remixz",
-  "repo": "SMPROJECT115/newrepo",
   "version": "3.5.2",
-  "update_branch": "main",
+  "app": "RemixZ Cleaner X",
+  "repo_secondary": "SMPROJECT115/newrepo",
+  "last_update": "2026-07-23 11:39:24",
+  "repos": [
+    "SMPROJECT115/remixz",
+    "SMPROJECT115/newrepo",
+    "alikhan847547-sketch/remixz"
+  ],
+  "repo": "SMPROJECT115/remixz",
+  "updates_enabled": true,
   "dependencies": [
     "mutagen",
     "colorama",
@@ -20,8 +20,8 @@
     "darkdetect",
     "packaging"
   ],
-  "last_update": "2026-07-23 11:33:44",
-  "app": "RemixZ Cleaner X",
-  "updates_enabled": true,
-  "repo_url": "https://github.com/SMPROJECT115/newrepo"
+  "repo_url": "https://github.com/SMPROJECT115/remixz",
+  "update_branch": "main",
+  "channel": "stable",
+  "notes": "v3.5.2 — Desktop sync: diseño Fluent+CTk, root+_internal+EXE+lib alineados."
 }

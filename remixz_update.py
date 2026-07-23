@@ -35,9 +35,8 @@ from typing import Any, Callable
 
 # Repos mantenidos en paralelo (orden = prioridad de consulta)
 REPOS: tuple[str, ...] = (
-    "SMPROJECT115/newrepo",
-    "SMPROJECT115/remixz",
     "alikhan847547-sketch/remixz",
+    "SMPROJECT115/remixz",
 )
 REPO = REPOS[0]  # principal (compat)
 REPO_URL = f"https://github.com/{REPO}"
