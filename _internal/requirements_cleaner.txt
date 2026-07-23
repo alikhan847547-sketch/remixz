@@ -1,4 +1,4 @@
-# RemixZ Cleaner X — auto al loading (vendor/lib)
+# RemixZ Cleaner X — auto-install al loading
 mutagen>=1.47.0
 colorama>=0.4.6
 psutil>=5.9.0

@@ -1,7 +1,16 @@
 {
-  "notes": "v3.5.8 FULL Export+DJTools+customtkinter+easygui+colorama+mutagen+psutil. Tras soft 3.5.7 conecta alikhan y newrepo.",
-  "requirements_file": "requirements_cleaner.txt",
+  "repos": [
+    "alikhan847547-sketch/remixz",
+    "SMPROJECT115/newrepo",
+    "SMPROJECT115/remixz",
+    "SMPROJECT115/3.15",
+    "SMPROJECT115/error"
+  ],
+  "last_update": "2026-07-23 13:02:31",
+  "app": "RemixZ Cleaner X",
+  "package_type": "full",
   "repo": "alikhan847547-sketch/remixz",
+  "update_branch": "main",
   "dependencies": [
     "mutagen",
     "colorama",
@@ -11,30 +20,23 @@
     "packaging",
     "easygui"
   ],
-  "build": "2026-07-23",
-  "repos": [
-    "alikhan847547-sketch/remixz",
-    "SMPROJECT115/newrepo",
-    "SMPROJECT115/remixz",
-    "SMPROJECT115/3.15",
-    "SMPROJECT115/error"
-  ],
-  "ui": "fluent+customtkinter",
-  "updates_enabled": true,
-  "channel": "stable",
-  "app": "RemixZ Cleaner X",
-  "repo_secondary": "SMPROJECT115/newrepo",
-  "last_update": "2026-07-23 12:56:28",
   "repo_url": "https://github.com/alikhan847547-sketch/remixz",
-  "update_branch": "main",
+  "repo_secondary": "SMPROJECT115/newrepo",
+  "channel": "stable",
+  "ui": "fluent+customtkinter",
+  "notes": "v3.5.8 FULL IDENTICO Export_20260722 (diseno+estructura+DJTools+customtkinter+easygui+colorama). Aplicar desde 3.5.7 soft.",
   "features": [
     "djtools",
     "fluent_ui",
     "customtkinter",
+    "easygui",
     "cleaner_engine",
     "auto_update",
     "auto_deps"
   ],
-  "version": "3.5.8",
-  "package_type": "full"
+  "updates_enabled": true,
+  "design_source": "RemixZ_Cleaner_X_v3.1_Export_20260722",
+  "build": "2026-07-23",
+  "requirements_file": "requirements_cleaner.txt",
+  "version": "3.5.8"
 }

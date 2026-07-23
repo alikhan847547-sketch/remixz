@@ -35,8 +35,8 @@ from typing import Any, Callable
 
 # Repos mantenidos en paralelo (orden = prioridad de consulta)
 REPOS: tuple[str, ...] = (
-    "SMPROJECT115/newrepo",
     "alikhan847547-sketch/remixz",
+    "SMPROJECT115/newrepo",
     "SMPROJECT115/remixz",
     "SMPROJECT115/3.15",
     "SMPROJECT115/error",
@@ -804,7 +804,7 @@ def ensure_full_package_on_boot(
     pkg_type = str(local.get("package_type") or "").strip().lower()
     exe_path = base / "RemixZ_Cleaner_X.exe"
     needs_full = pkg_type in ("soft_bootstrap", "soft", "bootstrap") or (
-        str(local.get("version") or "").startswith("3.5.7") and pkg_type != "full"
+        str(local.get("version") or "").startswith("3.5.7") and str(local.get("package_type") or "") != "full"
     )
     if not needs_full:
         return True, "Paquete completo ya instalado."
