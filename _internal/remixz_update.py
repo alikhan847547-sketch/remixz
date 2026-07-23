@@ -35,8 +35,9 @@ from typing import Any, Callable
 
 # Repos mantenidos en paralelo (orden = prioridad de consulta)
 REPOS: tuple[str, ...] = (
-    "alikhan847547-sketch/remixz",
     "SMPROJECT115/remixz",
+    "SMPROJECT115/newrepo",
+    "alikhan847547-sketch/remixz",
 )
 REPO = REPOS[0]  # principal (compat)
 REPO_URL = f"https://github.com/{REPO}"
@@ -57,7 +58,21 @@ PROTECTED_NAMES = {
     "tmdb_cache",
     "__pycache__",
     ".git",
+    "_pending_update",
+    "_finish_update.cmd",
 }
+
+# Extensiones que suelen estar bloqueadas si la app está en ejecución (EXE)
+_LOCK_PRONE_SUFFIXES = {
+    ".exe",
+    ".dll",
+    ".pyd",
+    ".so",
+    ".dylib",
+}
+
+PENDING_DIR_NAME = "_pending_update"
+FINISH_SCRIPT_NAME = "_finish_update.cmd"
 
 
 @dataclass
@@ -430,6 +445,237 @@ def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
     return first
 
 
+def _is_lock_error(exc: BaseException) -> bool:
+    """WinError 32/33/5 u OSError de archivo en uso."""
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        win = getattr(exc, "winerror", None)
+        if win in (5, 32, 33):
+            return True
+        if getattr(exc, "errno", None) in (11, 13, 16):
+            return True
+        msg = str(exc).lower()
+        if "being used by another process" in msg or "access is denied" in msg:
+            return True
+        if "está siendo utilizado" in msg or "proceso no tiene acceso" in msg:
+            return True
+    return False
+
+
+def _safe_copy_file(src: Path, dest: Path, retries: int = 6) -> str:
+    """
+    Copia un archivo tolerando bloqueos (EXE/DLL en uso).
+
+    Returns:
+      "ok"       — copiado al destino final
+      "deferred" — dejado en sidecar .new / se reintentará al reiniciar
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    last_exc: BaseException | None = None
+    pid = os.getpid()
+
+    for attempt in range(retries):
+        tmp = dest.with_name(f".{dest.name}.tmp_{pid}")
+        bak = dest.with_name(f".{dest.name}.old_{pid}")
+        try:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            shutil.copy2(src, tmp)
+            try:
+                os.replace(str(tmp), str(dest))
+                return "ok"
+            except OSError as exc:
+                last_exc = exc
+                if not _is_lock_error(exc):
+                    raise
+                # Intentar renombrar el bloqueado y poner el nuevo
+                try:
+                    if bak.exists():
+                        try:
+                            bak.unlink()
+                        except OSError:
+                            pass
+                    if dest.exists():
+                        os.replace(str(dest), str(bak))
+                    os.replace(str(tmp), str(dest))
+                    try:
+                        bak.unlink()
+                    except OSError:
+                        pass  # se limpia en el siguiente arranque
+                    return "ok"
+                except OSError as exc2:
+                    last_exc = exc2
+        except OSError as exc:
+            last_exc = exc
+            if not _is_lock_error(exc) and not isinstance(exc, PermissionError):
+                # errores no-lock: reintentar un poco y si no, propagar al final
+                pass
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+        time.sleep(0.12 * (attempt + 1))
+
+    # Diferir: copiar a destino.new (el script de cierre lo aplicará)
+    try:
+        pending_sidecar = dest.with_name(dest.name + ".new")
+        shutil.copy2(src, pending_sidecar)
+        return "deferred"
+    except OSError:
+        pass
+
+    if last_exc:
+        raise last_exc
+    raise OSError(f"No se pudo copiar {src.name}")
+
+
+def _stage_pending(src: Path, pending_root: Path, rel: Path) -> None:
+    target = pending_root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, target)
+
+
+def _write_finish_script(base: Path, pending_dir: Path, restart_cmd: list[str]) -> Path:
+    """
+    CMD que espera a que muera este proceso, aplica _pending_update + *.new,
+    limpia basura .old_*, y relanza la app.
+    """
+    script = base / FINISH_SCRIPT_NAME
+    pid = os.getpid()
+    # Escapar para cmd
+    base_s = str(base).replace('"', "")
+    pending_s = str(pending_dir).replace('"', "")
+    if restart_cmd:
+        # join simple: cada arg entre comillas
+        parts = []
+        for a in restart_cmd:
+            a = str(a).replace('"', "")
+            parts.append(f'"{a}"' if " " in a or "\\" in a else a)
+        # Prefer quoted full path form
+        launch = subprocess_list2cmdline(restart_cmd)
+    else:
+        launch = f'"{base_s}\\RemixZ_Cleaner_X.exe"'
+
+    content = f"""@echo off
+setlocal EnableExtensions
+cd /d "{base_s}"
+set PID={pid}
+set PENDING={pending_s}
+echo [RemixZ] Esperando cierre del proceso %PID%…
+:wait
+tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul
+if not errorlevel 1 (
+  ping -n 2 127.0.0.1 >nul
+  goto wait
+)
+ping -n 2 127.0.0.1 >nul
+echo [RemixZ] Aplicando archivos pendientes…
+if exist "%PENDING%" (
+  robocopy "%PENDING%" "{base_s}" /E /IS /IT /R:3 /W:1 /NFL /NDL /NJH /NJS /nc /ns /np >nul
+  rmdir /S /Q "%PENDING%" 2>nul
+)
+REM aplicar sidecars *.new
+for /r "{base_s}" %%F in (*.new) do (
+  set "F=%%~fF"
+  setlocal enabledelayedexpansion
+  set "DEST=!F:.new=!"
+  move /Y "%%~fF" "!DEST!" >nul 2>&1
+  endlocal
+)
+REM limpiar renombres temporales
+for /r "{base_s}" %%F in (.*.old_*) do del /f /q "%%~fF" 2>nul
+for /r "{base_s}" %%F in (.*.tmp_*) do del /f /q "%%~fF" 2>nul
+echo [RemixZ] Reiniciando…
+start "" {launch}
+ping -n 2 127.0.0.1 >nul
+del /f /q "%~f0" 2>nul
+exit /b 0
+"""
+    script.write_text(content, encoding="utf-8", errors="replace")
+    return script
+
+
+def subprocess_list2cmdline(seq: list[str]) -> str:
+    """Compatible con Windows list2cmdline sin importar subprocess arriba del todo."""
+    import subprocess
+
+    return subprocess.list2cmdline(seq)
+
+
+def has_pending_update(app_dir: Path | None = None) -> bool:
+    base = app_dir or _app_dir()
+    if (base / PENDING_DIR_NAME).is_dir():
+        return True
+    if (base / FINISH_SCRIPT_NAME).is_file():
+        return True
+    # cualquier *.new en la raíz o _internal
+    for p in base.glob("*.new"):
+        if p.is_file():
+            return True
+    internal = base / "_internal"
+    if internal.is_dir():
+        for p in internal.rglob("*.new"):
+            if p.is_file():
+                return True
+    return False
+
+
+def launch_finish_update_and_exit(
+    app_dir: Path | None = None,
+    restart_cmd: list[str] | None = None,
+) -> bool:
+    """
+    Lanza _finish_update.cmd (si hay pendiente) y debe ir seguido de os._exit.
+    """
+    import subprocess
+
+    base = app_dir or _app_dir()
+    script = base / FINISH_SCRIPT_NAME
+    pending = base / PENDING_DIR_NAME
+    if not script.exists():
+        if not pending.exists() and not has_pending_update(base):
+            return False
+        # generar script si solo hay pending
+        if restart_cmd is None:
+            if getattr(__import__("sys"), "frozen", False):
+                restart_cmd = [__import__("sys").executable]
+            else:
+                exe = base / "RemixZ_Cleaner_X.exe"
+                vbs = base / "ejecutar_Cleaner_X.vbs"
+                py = base / "RemixZ_Cleaner_X_App.py"
+                if exe.exists():
+                    restart_cmd = [str(exe)]
+                elif vbs.exists():
+                    restart_cmd = ["wscript.exe", str(vbs)]
+                else:
+                    restart_cmd = [__import__("sys").executable, str(py)]
+        _write_finish_script(base, pending if pending.exists() else base / PENDING_DIR_NAME, restart_cmd)
+
+    flags = 0
+    if os.name == "nt":
+        flags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(script)],
+        cwd=str(base),
+        close_fds=True,
+        creationflags=flags,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
+    return True
+
+
 def apply_update(
     info: UpdateInfo,
     app_dir: Path | None = None,
@@ -439,6 +685,10 @@ def apply_update(
     """
     Descarga el zip del repo/release y actualiza archivos locales.
     Conserva config y logs.
+
+    Si un archivo está bloqueado (EXE/DLL en uso → WinError 32), se deja en
+    _pending_update/ y se escribe _finish_update.cmd para aplicarlo al reiniciar.
+    Así el update desde 3.1.5/EXE no falla por archivo en uso.
 
     progress_cb(pct: int 0-100, message: str)
     status_cb(message: str)
@@ -462,6 +712,7 @@ def apply_update(
     tmp = Path(tempfile.mkdtemp(prefix="remixz_update_"))
     zip_path = tmp / "update.zip"
     extract_dir = tmp / "extract"
+    pending_dir = base / PENDING_DIR_NAME
 
     try:
         # ── Fase 1: descarga (0–50 %) ──────────────────────────────────────
@@ -493,24 +744,80 @@ def apply_update(
 
         # ── Fase 3: copiar archivos (65–95 %) ──────────────────────────────
         report("Preparando archivos a copiar…", 66)
+        # limpiar pending anterior
+        if pending_dir.exists():
+            try:
+                shutil.rmtree(pending_dir, ignore_errors=True)
+            except Exception:
+                pass
+
         files = [
             p for p in src_root.rglob("*")
             if p.is_file()
             and not any(part in PROTECTED_NAMES for part in p.relative_to(src_root).parts)
             and p.suffix != ".pyc"
             and "__pycache__" not in p.relative_to(src_root).parts
+            and not p.name.endswith(".new")
+            and not p.name.startswith("._")
         ]
+        # Copiar primero archivos "suaves" (.py, .json, …) y al final EXE/DLL
+        def _copy_order(p: Path) -> tuple:
+            suf = p.suffix.lower()
+            hard = 1 if suf in _LOCK_PRONE_SUFFIXES else 0
+            return (hard, str(p).lower())
+
+        files.sort(key=_copy_order)
+
         total_f = max(len(files), 1)
         copied = 0
+        deferred = 0
+        errors: list[str] = []
+
         for i, path in enumerate(files, 1):
             rel = path.relative_to(src_root)
             dest = base / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, dest)
-            copied += 1
+            try:
+                # Si es propenso a lock y el destino existe, ir directo a pending
+                # cuando estamos frozen (EXE) o ya falló antes.
+                prefer_defer = (
+                    dest.exists()
+                    and dest.suffix.lower() in _LOCK_PRONE_SUFFIXES
+                    and (
+                        getattr(__import__("sys"), "frozen", False)
+                        or dest.name.lower() == "remixz_cleaner_x.exe"
+                    )
+                )
+                if prefer_defer:
+                    _stage_pending(path, pending_dir, rel)
+                    deferred += 1
+                else:
+                    result = _safe_copy_file(path, dest)
+                    if result == "ok":
+                        copied += 1
+                    else:
+                        _stage_pending(path, pending_dir, rel)
+                        deferred += 1
+            except Exception as exc:
+                if _is_lock_error(exc):
+                    try:
+                        _stage_pending(path, pending_dir, rel)
+                        deferred += 1
+                    except Exception as exc2:
+                        errors.append(f"{rel}: {exc2}")
+                else:
+                    errors.append(f"{rel}: {exc}")
+
             if i == 1 or i == total_f or i % max(1, total_f // 25) == 0:
                 pct = 66 + int(i / total_f * 29)
-                report(f"Aplicando… {i}/{total_f}  ({rel.name})", pct)
+                report(
+                    f"Aplicando… {i}/{total_f}  ({rel.name})"
+                    + (f"  · diferidos:{deferred}" if deferred else ""),
+                    pct,
+                )
+
+        if errors and copied == 0 and deferred == 0:
+            report(f"Error: {errors[0]}", 100)
+            return False, f"Error al aplicar update: {errors[0]}"
 
         # ── Fase 4: version.json local (95–100 %) ──────────────────────────
         report("Actualizando version.json…", 96)
@@ -526,7 +833,45 @@ def apply_update(
         local["repo_url"] = info.repo_url or f"https://github.com/{used_repo}"
         local["repos"] = list(dict.fromkeys([used_repo, *REPOS, *list(local.get("repos") or [])]))
         local["repo_secondary"] = next((r for r in REPOS if r != used_repo), REPOS[-1])
-        save_local_version(local, base)
+        try:
+            save_local_version(local, base)
+        except Exception:
+            # version también bloqueada → pending
+            try:
+                ver_src = tmp / "version_out.json"
+                ver_src.write_text(
+                    __import__("json").dumps(local, indent=4, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                _stage_pending(ver_src, pending_dir, Path("version.json"))
+                deferred += 1
+            except Exception:
+                pass
+
+        # Script post-cierre si hubo diferidos o hay EXE nuevo pendiente
+        if deferred > 0 or pending_dir.exists():
+            import sys as _sys
+
+            if getattr(_sys, "frozen", False):
+                restart_cmd = [_sys.executable]
+            else:
+                exe = base / "RemixZ_Cleaner_X.exe"
+                vbs = base / "ejecutar_Cleaner_X.vbs"
+                py = base / "RemixZ_Cleaner_X_App.py"
+                if exe.exists() or (pending_dir / "RemixZ_Cleaner_X.exe").exists():
+                    restart_cmd = [str(exe if exe.exists() else pending_dir / "RemixZ_Cleaner_X.exe")]
+                    if not exe.exists():
+                        restart_cmd = [str(base / "RemixZ_Cleaner_X.exe")]
+                elif vbs.exists():
+                    restart_cmd = ["wscript.exe", str(vbs)]
+                else:
+                    restart_cmd = [_sys.executable, str(py)]
+            _write_finish_script(base, pending_dir, restart_cmd)
+            report("Update listo (parte al reiniciar).", 100)
+            return True, (
+                f"Update aplicado ({copied} ahora, {deferred} al reiniciar). "
+                f"Reinicio automático…"
+            )
 
         report("Update aplicado.", 100)
         return True, f"Update aplicado ({copied} archivos). Reinicio automático…"

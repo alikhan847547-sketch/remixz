@@ -701,6 +701,9 @@ def restart_application() -> None:
     """
     Cierra la app actual y la vuelve a lanzar (script, VBS o EXE).
     Tras un update SIEMPRE se usa esto — no dejar la UI vieja abierta.
+
+    Si hay _pending_update / _finish_update.cmd (archivos bloqueados por WinError 32),
+    lanza el script de cierre que espera al PID, copia y reinicia.
     """
     cwd = str(APP_DIR)
     cmd: list[str] = []
@@ -723,6 +726,21 @@ def restart_application() -> None:
                     if Path(pyw).exists():
                         exe = pyw
                 cmd = [exe, str(script)]
+
+        # Update diferido: aplicar EXE/DLL bloqueados DESPUÉS de salir
+        try:
+            if remixz_update.has_pending_update(APP_DIR):
+                if remixz_update.launch_finish_update_and_exit(APP_DIR, restart_cmd=cmd):
+                    _log_boot("restart_application: finish_update script launched")
+                    try:
+                        os._exit(0)
+                    except Exception:
+                        sys.exit(0)
+        except Exception as exc:
+            try:
+                _log_boot(f"restart_application pending-update: {exc}")
+            except Exception:
+                pass
 
         flags = 0
         if os.name == "nt":

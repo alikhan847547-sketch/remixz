@@ -1,17 +1,18 @@
 {
+  "channel": "stable",
+  "notes": "v3.5.3 — Fix WinError 32 al aplicar update (EXE/DLL bloqueados): copia segura + apply diferido al reiniciar + actualizar_forzado.bat",
+  "updates_enabled": true,
   "build": "2026-07-23",
-  "ui": "fluent+customtkinter",
-  "version": "3.5.2",
-  "app": "RemixZ Cleaner X",
+  "version": "3.5.3",
   "repo_secondary": "SMPROJECT115/newrepo",
-  "last_update": "2026-07-23 11:39:24",
+  "ui": "fluent+customtkinter",
+  "repo": "SMPROJECT115/remixz",
+  "last_update": "2026-07-23 11:47:17",
   "repos": [
     "SMPROJECT115/remixz",
     "SMPROJECT115/newrepo",
     "alikhan847547-sketch/remixz"
   ],
-  "repo": "SMPROJECT115/remixz",
-  "updates_enabled": true,
   "dependencies": [
     "mutagen",
     "colorama",
@@ -20,8 +21,7 @@
     "darkdetect",
     "packaging"
   ],
+  "app": "RemixZ Cleaner X",
   "repo_url": "https://github.com/SMPROJECT115/remixz",
-  "update_branch": "main",
-  "channel": "stable",
-  "notes": "v3.5.2 — Desktop sync: diseño Fluent+CTk, root+_internal+EXE+lib alineados."
+  "update_branch": "main"
 }
