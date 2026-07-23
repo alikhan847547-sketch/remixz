@@ -610,10 +610,14 @@ def subprocess_list2cmdline(seq: list[str]) -> str:
 
 def has_pending_update(app_dir: Path | None = None) -> bool:
     base = app_dir or _app_dir()
-    if (base / PENDING_DIR_NAME).is_dir():
-        return True
-    if (base / FINISH_SCRIPT_NAME).is_file():
-        return True
+    pending = base / PENDING_DIR_NAME
+    if pending.is_dir():
+        # solo cuenta si hay archivos reales
+        try:
+            if any(pending.rglob("*")):
+                return True
+        except Exception:
+            return True
     # cualquier *.new en la raíz o _internal
     for p in base.glob("*.new"):
         if p.is_file():
@@ -623,7 +627,148 @@ def has_pending_update(app_dir: Path | None = None) -> bool:
         for p in internal.rglob("*.new"):
             if p.is_file():
                 return True
+    # leftovers de renombre (.old_pid / .tmp_pid) no bloquean el arranque
     return False
+
+
+def apply_pending_on_boot(
+    app_dir: Path | None = None,
+    progress_cb: Callable | None = None,
+    status_cb: Callable | None = None,
+) -> tuple[bool, str]:
+    """
+    Aplica en el LOADING / arranque lo que quedó pendiente por WinError 32:
+      - carpeta _pending_update/
+      - archivos *.new junto al destino final
+      - limpia .old_* / .tmp_* residuales
+      - elimina _finish_update.cmd si ya no hace falta
+
+    Se llama desde el splash antes de deps/motor. No cierra el proceso.
+    Returns: (hubo_trabajo_o_ok, mensaje)
+    """
+    base = Path(app_dir) if app_dir is not None else _app_dir()
+
+    def report(msg: str, pct: int | None = None):
+        if status_cb:
+            try:
+                status_cb(msg)
+            except Exception:
+                pass
+        if progress_cb and pct is not None:
+            try:
+                progress_cb(max(0, min(100, int(pct))), msg)
+            except Exception:
+                pass
+
+    pending = base / PENDING_DIR_NAME
+    applied = 0
+    deferred = 0
+    cleaned = 0
+
+    if not has_pending_update(base) and not (base / FINISH_SCRIPT_NAME).exists():
+        # limpiar basura menor aunque no haya pending real
+        for pattern in (".*.old_*", ".*.tmp_*"):
+            for p in base.rglob(pattern):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                        cleaned += 1
+                except OSError:
+                    pass
+        if cleaned:
+            return True, f"Limpieza de residuos de update ({cleaned})."
+        return True, "Sin update pendiente."
+
+    report("Aplicando update pendiente al arranque…", 5)
+
+    # 1) _pending_update → base
+    if pending.is_dir():
+        files = [p for p in pending.rglob("*") if p.is_file()]
+        total = max(len(files), 1)
+        for i, src in enumerate(files, 1):
+            rel = src.relative_to(pending)
+            # no pisar config/logs protegidos
+            if any(part in PROTECTED_NAMES for part in rel.parts):
+                continue
+            dest = base / rel
+            try:
+                result = _safe_copy_file(src, dest, retries=4)
+                if result == "ok":
+                    applied += 1
+                    try:
+                        src.unlink()
+                    except OSError:
+                        pass
+                else:
+                    deferred += 1
+            except Exception:
+                deferred += 1
+            if i == 1 or i == total or i % max(1, total // 10) == 0:
+                report(f"Pending… {i}/{total}  ({rel.name})", 5 + int(i / total * 70))
+
+        # borrar pending si quedó vacío
+        try:
+            leftover = [p for p in pending.rglob("*") if p.is_file()]
+            if not leftover:
+                shutil.rmtree(pending, ignore_errors=True)
+        except Exception:
+            pass
+
+    # 2) sidecars *.new
+    report("Aplicando archivos .new…", 80)
+    new_files = list(base.glob("*.new"))
+    internal = base / "_internal"
+    if internal.is_dir():
+        new_files.extend(internal.rglob("*.new"))
+    for nf in new_files:
+        if not nf.is_file():
+            continue
+        dest = nf.with_name(nf.name[:-4]) if nf.name.endswith(".new") else nf
+        # name "foo.exe.new" → with_name might be wrong; handle .new suffix
+        if nf.name.endswith(".new"):
+            dest = nf.with_name(nf.name[: -len(".new")])
+        try:
+            result = _safe_copy_file(nf, dest, retries=4)
+            if result == "ok":
+                applied += 1
+                try:
+                    nf.unlink()
+                except OSError:
+                    pass
+            else:
+                deferred += 1
+        except Exception:
+            deferred += 1
+
+    # 3) basura temporal
+    report("Limpiando residuos…", 92)
+    for p in base.rglob("*"):
+        try:
+            name = p.name
+            if not p.is_file():
+                continue
+            if name.startswith(".") and (".old_" in name or ".tmp_" in name):
+                p.unlink()
+                cleaned += 1
+        except OSError:
+            pass
+
+    # 4) si ya no hay pending real, quitar script de cierre
+    if not has_pending_update(base):
+        fin = base / FINISH_SCRIPT_NAME
+        if fin.exists():
+            try:
+                fin.unlink()
+            except OSError:
+                pass
+
+    msg = f"Arranque: aplicados {applied}"
+    if deferred:
+        msg += f", aún bloqueados {deferred} (se reintentan)"
+    if cleaned:
+        msg += f", limpios {cleaned}"
+    report(msg, 100)
+    return True, msg
 
 
 def launch_finish_update_and_exit(

@@ -2828,10 +2828,42 @@ def main():
                 except Exception:
                     pass
 
+            # ── 0) Update pendiente (WinError 32) en el LOADING ──────────
+            try:
+                ui_status("Revisando update pendiente…")
+                if splash is not None:
+                    app.after(
+                        0,
+                        lambda: splash.set_status(
+                            "Aplicando update pendiente…", 8, step=0
+                        ),
+                    )
+            except Exception:
+                pass
+            try:
+                def _pend_status(msg: str):
+                    ui_status(msg)
+
+                def _pend_progress(pct: int, msg: str = ""):
+                    # mapear 0-100 pending → 5-18 del splash
+                    mapped = 5 + int(max(0, min(100, pct)) * 0.13)
+                    ui_progress(mapped)
+                    if msg:
+                        ui_status(msg)
+
+                ok_p, msg_p = remixz_update.apply_pending_on_boot(
+                    APP_DIR,
+                    progress_cb=_pend_progress,
+                    status_cb=_pend_status,
+                )
+                _log_boot(f"pending_on_boot: ok={ok_p} {msg_p}")
+            except Exception as exc:
+                _log_boot(f"pending_on_boot FAIL: {exc}")
+
             ui_status("Comprobando dependencias…")
             try:
                 if splash is not None:
-                    app.after(0, lambda: splash.set_status("Comprobando dependencias…", 15, step=1))
+                    app.after(0, lambda: splash.set_status("Comprobando dependencias…", 20, step=1))
             except Exception:
                 pass
 
