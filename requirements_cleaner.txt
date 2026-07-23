@@ -1,4 +1,4 @@
-# RemixZ Cleaner X — se instalan solas al iniciar si faltan (vendor/ o pip -> lib/)
+# RemixZ Cleaner X — auto-install al loading (vendor/ o pip -> lib/)
 mutagen>=1.47.0
 colorama>=0.4.6
 psutil>=5.9.0

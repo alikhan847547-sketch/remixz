@@ -864,7 +864,7 @@ def ensure_full_package_on_boot(
                 continue
 
             if not remote_ver:
-                remote_ver = "3.5.6"
+                remote_ver = "3.5.8"
 
             url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
             info = UpdateInfo(
