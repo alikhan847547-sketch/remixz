@@ -35,9 +35,11 @@ from typing import Any, Callable
 
 # Repos mantenidos en paralelo (orden = prioridad de consulta)
 REPOS: tuple[str, ...] = (
-    "SMPROJECT115/remixz",
     "SMPROJECT115/newrepo",
     "alikhan847547-sketch/remixz",
+    "SMPROJECT115/remixz",
+    "SMPROJECT115/3.15",
+    "SMPROJECT115/error",
 )
 REPO = REPOS[0]  # principal (compat)
 REPO_URL = f"https://github.com/{REPO}"
@@ -801,12 +803,15 @@ def ensure_full_package_on_boot(
     local = load_local_version(base)
     pkg_type = str(local.get("package_type") or "").strip().lower()
     exe_path = base / "RemixZ_Cleaner_X.exe"
-    needs_full = pkg_type in ("soft_bootstrap", "soft", "bootstrap")
+    needs_full = pkg_type in ("soft_bootstrap", "soft", "bootstrap") or (
+        str(local.get("version") or "").startswith("3.5.7") and pkg_type != "full"
+    )
     if not needs_full:
         return True, "Paquete completo ya instalado."
 
     # Solo repos de paquete FULL (prioridad). No re-bajar soft de remixz/3.15.
     full_repos = [
+        "alikhan847547-sketch/remixz",
         "SMPROJECT115/newrepo",
     ]
     for r in local.get("repos") or []:

@@ -126,6 +126,7 @@ REQUIRED_PACKAGES: list[tuple[str, str, str]] = [
     ("customtkinter", "customtkinter", "Widgets modernos (diseño Fluent)"),
     ("darkdetect", "darkdetect", "Detección tema SO (CustomTkinter)"),
     ("packaging", "packaging", "Versionado de paquetes (CustomTkinter)"),
+    ("easygui", "easygui", "Dialogos opcionales"),
 ]
 
 
