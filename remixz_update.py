@@ -214,9 +214,14 @@ def _check_one_repo(
     local_sha: str,
     branch: str,
 ) -> UpdateInfo:
-    """Consulta un solo repositorio y devuelve UpdateInfo."""
+    """
+    Consulta un repositorio y elige la fuente con la versión MÁS NUEVA.
+
+    Importante: NO devolver solo el release si version.json en main es más nuevo.
+    Caso real: release latest = v3.3.0 pero main/version.json = 3.5.0.
+    """
     api = f"https://api.github.com/repos/{repo}"
-    info = UpdateInfo(
+    base = UpdateInfo(
         local_version=local_ver,
         local_sha=local_sha,
         repo=repo,
@@ -225,19 +230,28 @@ def _check_one_repo(
 
     code, body = _http_get_json(api)
     if code != 200:
-        info.message = f"No se pudo conectar con {repo}."
-        info.raw = {"http": code, "body": body, "repo": repo}
-        return info
+        base.message = f"No se pudo conectar con {repo}."
+        base.raw = {"http": code, "body": body, "repo": repo}
+        return base
+
+    candidates: list[UpdateInfo] = []
 
     # 1) Releases
     code, rel = _http_get_json(f"{api}/releases/latest")
     if code == 200 and isinstance(rel, dict) and rel.get("tag_name"):
         tag = str(rel.get("tag_name", "")).lstrip("vV")
-        info.ready = True
-        info.source = "release"
-        info.remote_version = tag
-        info.release_notes = str(rel.get("body") or rel.get("name") or "")
-        info.download_url = str(rel.get("zipball_url") or "")
+        info = UpdateInfo(
+            local_version=local_ver,
+            local_sha=local_sha,
+            repo=repo,
+            repo_url=f"https://github.com/{repo}",
+            ready=True,
+            source="release",
+            remote_version=tag,
+            release_notes=str(rel.get("body") or rel.get("name") or ""),
+            download_url=str(rel.get("zipball_url") or ""),
+            raw=rel,
+        )
         for asset in rel.get("assets") or []:
             name = str(asset.get("name", "")).lower()
             if name.endswith(".zip"):
@@ -245,21 +259,18 @@ def _check_one_repo(
                 break
         info.available = _is_newer(tag, local_ver)
         info.message = (
-            f"Nueva versión {tag} en {repo} (local {local_ver})."
+            f"Nueva versión {tag} en {repo} (release; local {local_ver})."
             if info.available
-            else f"Al día con {repo} (v{local_ver})."
+            else f"Release {repo} v{tag} ≤ local v{local_ver}."
         )
-        info.raw = rel
-        return info
+        candidates.append(info)
 
-    # 2) version.json en rama
-    # Preferir content base64 de la API (evita caché vieja de raw.githubusercontent.com)
+    # 2) version.json en rama (siempre consultar; puede ser más nuevo que el release)
     for br in (branch, *DEFAULT_BRANCHES):
         code, content = _http_get_json(f"{api}/contents/version.json?ref={br}")
         if code != 200 or not isinstance(content, dict):
             continue
         ver_data = None
-        # 2a) decode base64 embebido
         try:
             if content.get("encoding") == "base64" and content.get("content"):
                 import base64
@@ -267,65 +278,90 @@ def _check_one_repo(
                 ver_data = json.loads(raw)
         except Exception:
             ver_data = None
-        # 2b) fallback download_url
         if not isinstance(ver_data, dict) and content.get("download_url"):
             dcode, ver_data = _http_get_json(content["download_url"])
             if dcode != 200 or not isinstance(ver_data, dict):
                 ver_data = None
         if isinstance(ver_data, dict):
             remote_ver = str(ver_data.get("version", "")).lstrip("vV")
-            info.ready = True
-            info.source = "version.json"
-            info.remote_version = remote_ver
-            info.download_url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
-            info.release_notes = str(ver_data.get("notes") or "")
-            info.available = _is_newer(remote_ver, local_ver)
+            info = UpdateInfo(
+                local_version=local_ver,
+                local_sha=local_sha,
+                repo=repo,
+                repo_url=f"https://github.com/{repo}",
+                ready=True,
+                source="version.json",
+                remote_version=remote_ver,
+                download_url=f"https://codeload.github.com/{repo}/zip/refs/heads/{br}",
+                release_notes=str(ver_data.get("notes") or ""),
+                available=_is_newer(remote_ver, local_ver),
+                raw=ver_data,
+            )
             info.message = (
                 f"Nueva versión {remote_ver} en {repo}/{br} (local {local_ver})."
                 if info.available
-                else f"Al día con {repo} (v{local_ver})."
+                else f"Al día con {repo}/{br} (v{local_ver})."
             )
-            info.raw = ver_data
-            return info
+            candidates.append(info)
+            break
 
-    # 3) Último commit
-    for br in (branch, *DEFAULT_BRANCHES):
-        code, commits = _http_get_json(f"{api}/commits?sha={br}&per_page=1")
-        if code == 200 and isinstance(commits, list) and commits:
-            sha = str(commits[0].get("sha", ""))
-            msg = ""
-            try:
-                msg = str(commits[0].get("commit", {}).get("message", ""))
-            except Exception:
-                pass
-            info.ready = True
-            info.source = "commit"
-            info.remote_sha = sha
-            info.remote_version = sha[:7] if sha else ""
-            info.download_url = f"https://codeload.github.com/{repo}/zip/refs/heads/{br}"
-            info.release_notes = msg
-            if local_sha and sha and local_sha != sha:
-                info.available = True
-                info.message = f"Commits nuevos en {repo}/{br} ({sha[:7]})."
-            elif not local_sha and sha:
-                info.available = False
-                info.message = (
-                    f"Repo {repo} activo en {br} ({sha[:7]}). "
-                    f"Sin release/version.json todavía."
+    # 3) Último commit (solo si no hay release ni version.json)
+    if not candidates:
+        for br in (branch, *DEFAULT_BRANCHES):
+            code, commits = _http_get_json(f"{api}/commits?sha={br}&per_page=1")
+            if code == 200 and isinstance(commits, list) and commits:
+                sha = str(commits[0].get("sha", ""))
+                msg = ""
+                try:
+                    msg = str(commits[0].get("commit", {}).get("message", ""))
+                except Exception:
+                    pass
+                info = UpdateInfo(
+                    local_version=local_ver,
+                    local_sha=local_sha,
+                    repo=repo,
+                    repo_url=f"https://github.com/{repo}",
+                    ready=True,
+                    source="commit",
+                    remote_sha=sha,
+                    remote_version=sha[:7] if sha else "",
+                    download_url=f"https://codeload.github.com/{repo}/zip/refs/heads/{br}",
+                    release_notes=msg,
+                    raw=commits[0] if commits else {},
                 )
-            else:
-                info.available = False
-                info.message = f"Al día con {repo}/{br}."
-            info.raw = commits[0] if commits else {}
-            return info
-        if code == 409:
-            info.ready = False
-            info.message = f"El repositorio {repo} existe pero está vacío."
-            info.raw = {"http": 409, "branch": br, "repo": repo}
-            return info
+                if local_sha and sha and local_sha != sha:
+                    info.available = True
+                    info.message = f"Commits nuevos en {repo}/{br} ({sha[:7]})."
+                elif not local_sha and sha:
+                    info.available = False
+                    info.message = (
+                        f"Repo {repo} activo en {br} ({sha[:7]}). "
+                        f"Sin release/version.json todavía."
+                    )
+                else:
+                    info.available = False
+                    info.message = f"Al día con {repo}/{br}."
+                return info
+            if code == 409:
+                base.ready = False
+                base.message = f"El repositorio {repo} existe pero está vacío."
+                base.raw = {"http": 409, "branch": br, "repo": repo}
+                return base
 
-    info.message = f"Sin release/version/commits en {repo}."
-    return info
+    if not candidates:
+        base.message = f"Sin release/version/commits en {repo}."
+        return base
+
+    # Elegir la versión numérica más alta (release vs version.json)
+    def _key(c: UpdateInfo):
+        return _parse_version(c.remote_version or "0")
+
+    best = max(candidates, key=_key)
+    # Si hay un update disponible, preferir el más nuevo entre los available
+    avail = [c for c in candidates if c.available and c.download_url]
+    if avail:
+        best = max(avail, key=_key)
+    return best
 
 
 def check_for_updates(app_dir: Path | None = None) -> UpdateInfo:
