@@ -1,15 +1,20 @@
 {
-  "build": "2026-07-23",
-  "update_branch": "main",
-  "updates_enabled": true,
-  "repo_url": "https://github.com/alikhan847547-sketch/remixz",
-  "ui": "fluent+customtkinter",
-  "last_update": "2026-07-23 10:28:42",
-  "channel": "stable",
+  "version": "3.5.2",
   "app": "RemixZ Cleaner X",
-  "notes": "v3.5.1 — CustomTkinter + progress bar premium + fuentes. Auto-install deps. Mirror SMPROJECT115.",
+  "channel": "stable",
+  "build": "2026-07-23",
+  "last_update": "2026-07-23 10:38:08",
+  "updates_enabled": true,
+  "update_branch": "main",
   "repo": "alikhan847547-sketch/remixz",
+  "repo_url": "https://github.com/alikhan847547-sketch/remixz",
   "repo_secondary": "SMPROJECT115/remixz",
+  "repos": [
+    "alikhan847547-sketch/remixz",
+    "SMPROJECT115/remixz"
+  ],
+  "ui": "fluent+customtkinter",
+  "notes": "v3.5.2 — Sync root+_internal: CustomTkinter, progress bar premium, fonts. Fix EXE _internal viejo.",
   "dependencies": [
     "mutagen",
     "colorama",
@@ -17,10 +22,5 @@
     "customtkinter",
     "darkdetect",
     "packaging"
-  ],
-  "repos": [
-    "alikhan847547-sketch/remixz",
-    "SMPROJECT115/remixz"
-  ],
-  "version": "3.5.1"
+  ]
 }
