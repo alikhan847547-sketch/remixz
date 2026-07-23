@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RemixZ Cleaner X — Preview UI v3.1.5</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --surface: #111821;
+      --panel: #121a24;
+      --card: #151c27;
+      --input: #1a2330;
+      --border: #2a3545;
+      --fg: #e8eef7;
+      --muted: #8b9bb0;
+      --dim: #6b7c90;
+      --accent: #2f6fed;
+      --accent-light: #6aa8ff;
+      --cyan: #5ec8ff;
+      --green: #3ecf8e;
+      --orange: #ff8a3d;
+      --header: #0e141c;
+      --divider: #1e2836;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #06090d;
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px 48px;
+    }
+    .banner {
+      width: min(920px, 100%);
+      margin-bottom: 16px;
+      padding: 12px 16px;
+      background: #132038;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--accent-light);
+      font-size: 13px;
+    }
+    .banner strong { color: #fff; }
+    .tabs {
+      width: min(920px, 100%);
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .tabs button {
+      background: var(--card);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .tabs button.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .window {
+      width: min(900px, 100%);
+      height: 700px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,.55);
+      display: flex;
+      flex-direction: column;
+    }
+    .titlebar {
+      height: 36px;
+      background: #1a1f28;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 6px;
+      border-bottom: 1px solid var(--divider);
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot.r { background: #ff5f57; }
+    .dot.y { background: #febc2e; }
+    .dot.g { background: #28c840; }
+    .titlebar span {
+      margin-left: 10px;
+      font-size: 12px;
+      color: var(--dim);
+    }
+    .header {
+      height: 68px;
+      background: var(--header);
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--divider);
+      position: relative;
+    }
+    .header::before {
+      content: "";
+      width: 3px;
+      height: 100%;
+      background: var(--accent);
+    }
+    .logo {
+      width: 36px; height: 36px;
+      margin-left: 14px;
+      display: grid; place-items: center;
+      overflow: hidden;
+    }
+    .logo img { width: 36px; height: 36px; object-fit: contain; }
+    .logo.fallback {
+      background: var(--accent);
+      border-radius: 6px;
+      font-weight: 900; font-size: 16px; color: #fff;
+    }
+    .hero-logo {
+      width: 112px; height: 112px;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto 8px;
+      filter: drop-shadow(0 0 24px rgba(47,111,237,.45));
+    }
+    .hero-center { text-align: center; }
+    .hero-center .h1 { letter-spacing: .04em; }
+    .accent-short {
+      width: 72px; height: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--cyan));
+      border-radius: 999px;
+      margin: 14px auto 0;
+    }
+    .chips { justify-content: center; }
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .brand { margin-left: 12px; }
+    .brand .line1 { font-weight: 800; font-size: 13px; }
+    .brand .line1 em { font-style: normal; color: var(--accent-light); font-weight: 600; }
+    .brand .line2 { font-size: 8px; color: var(--muted); margin-top: 2px; }
+    .ver-chip {
+      margin-left: auto;
+      margin-right: 16px;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--accent-light);
+    }
+    .header-glow {
+      height: 1px;
+      background: linear-gradient(90deg, var(--accent), transparent 70%);
+    }
+    .content {
+      flex: 1;
+      padding: 28px 40px;
+      overflow: auto;
+    }
+    .content.main-pad { padding: 20px 28px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    .panel .bar { height: 3px; background: var(--accent); }
+    .panel .body { padding: 22px 24px; }
+    .eyebrow {
+      font-size: 8px; font-weight: 700; color: var(--cyan);
+      letter-spacing: .08em;
+    }
+    .h1 { font-size: 28px; font-weight: 900; margin-top: 4px; }
+    .sub { font-size: 10px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+    .chips { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .chip {
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      min-width: 110px;
+      padding: 8px 14px 10px;
+    }
+    .chip .lbl {
+      font-size: 7px; color: var(--dim); text-transform: uppercase;
+    }
+    .chip .val { font-size: 13px; font-weight: 700; margin-top: 2px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .card .top { height: 2px; }
+    .card .inner { padding: 16px 18px; }
+    .card h3 { font-size: 11px; font-weight: 700; }
+    .card .hint { font-size: 8px; color: var(--muted); margin: 4px 0 10px; }
+    .card p { font-size: 10px; color: var(--muted); }
+    .progress {
+      height: 12px;
+      background: var(--input);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 10px;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.35);
+    }
+    .progress > i {
+      display: block;
+      height: 100%;
+      width: 42%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent) 0%, #4d8dff 45%, var(--cyan) 100%);
+      box-shadow: 0 0 12px rgba(47, 111, 237, .45);
+      animation: slide 1.8s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0% { width: 22%; margin-left: 0; opacity: .85; }
+      50% { width: 38%; margin-left: 35%; opacity: 1; }
+      100% { width: 22%; margin-left: 70%; opacity: .85; }
+    }
+    .tip { font-size: 9px; color: var(--dim); margin-top: 12px; }
+    .footer {
+      height: 34px;
+      background: var(--header);
+      border-top: 1px solid var(--divider);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      font-size: 8px;
+      color: var(--muted);
+    }
+    .footer .dot-live {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green); margin-right: 8px;
+    }
+    .footer .right { margin-left: auto; color: var(--dim); }
+    .h2 { font-size: 20px; font-weight: 900; }
+    .cta-row { display: flex; gap: 16px; align-items: stretch; }
+    .btn {
+      background: var(--green);
+      color: #04140c;
+      border: none;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 12px;
+      padding: 14px 22px;
+      cursor: default;
+      white-space: nowrap;
+    }
+    .pathbox {
+      flex: 1;
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 12px 8px;
+    }
+    .pathbox .lbl { font-size: 7px; color: var(--dim); }
+    .pathbox .val { font-size: 9px; color: var(--muted); margin-top: 2px; }
+    .log {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      flex: 1;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 12px;
+    }
+    .log .top { height: 2px; background: var(--cyan); }
+    .log .head {
+      display: flex; justify-content: space-between;
+      padding: 12px 16px 8px;
+      font-size: 11px; font-weight: 700;
+    }
+    .log .live { color: var(--green); font-size: 8px; font-weight: 600; }
+    .log pre {
+      flex: 1;
+      margin: 0 12px 12px;
+      background: var(--input);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: Consolas, monospace;
+      font-size: 9px;
+      color: var(--fg);
+      line-height: 1.55;
+      overflow: auto;
+    }
+    .prog-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+    .prog-card .row {
+      display: flex; justify-content: space-between;
+      font-size: 9px; font-weight: 700; margin-bottom: 8px;
+    }
+    .prog-card .row span:last-child { color: var(--cyan); }
+    .prog-bar {
+      height: 12px;
+      background: var(--input);
+      border-radius: 999px;
+      overflow: hidden;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.35);
+    }
+    .prog-bar > i {
+      display: block;
+      height: 100%;
+      width: 62%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent) 0%, #4d8dff 40%, var(--cyan) 100%);
+      box-shadow: 0 0 10px rgba(94, 200, 255, .35);
+    }
+    .status { font-size: 9px; color: var(--muted); margin-top: 8px; }
+    .screen { display: none; height: 100%; flex-direction: column; }
+    .screen.active { display: flex; }
+    .main-body { flex: 1; display: flex; flex-direction: column; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <strong>Preview local</strong> — Mock de la nueva UI (no es el EXE).
+    La app real de escritorio también está abierta. <strong>Nada se ha subido a GitHub.</strong>
+  </div>
+
+  <div class="tabs">
+    <button class="active" onclick="show('welcome', this)">Bienvenida</button>
+    <button onclick="show('main', this)">Panel de limpieza</button>
+  </div>
+
+  <div class="window">
+    <div class="titlebar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <span>RemixZ Cleaner X v3.1.5</span>
+    </div>
+
+    <div class="header">
+      <div class="logo"><img src="logo_x_header.png" alt="X" onerror="this.parentElement.classList.add('fallback');this.parentElement.textContent='X'"/></div>
+      <div class="brand">
+        <div class="line1">REMIXZ  ·  <em>Cleaner X</em></div>
+        <div class="line2">Identidad X · limpieza profesional de media</div>
+      </div>
+      <div class="ver-chip">v3.1.5</div>
+    </div>
+    <div class="header-glow"></div>
+
+    <!-- WELCOME -->
+    <div id="welcome" class="screen active">
+      <div class="content">
+        <div class="panel">
+          <div class="bar"></div>
+          <div class="body hero-center">
+            <img class="hero-logo" src="logo_x_128.png" alt="Cleaner X"/>
+            <div class="h1">CLEANER X</div>
+            <div class="sub">Limpieza profesional de nombres y metadatos<br/>RemixZ  ·  Tio Dealer  ·  WhatsApp</div>
+            <div class="accent-short"></div>
+          </div>
+        </div>
+        <div class="chips">
+          <div class="chip"><div class="lbl">Versión</div><div class="val" style="color:var(--cyan)">v3.1.5</div></div>
+          <div class="chip"><div class="lbl">Dependencias</div><div class="val" style="color:var(--green)">OK</div></div>
+          <div class="chip"><div class="lbl">Flujo</div><div class="val" style="color:var(--green)">1 acción</div></div>
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <div class="top" style="background:var(--accent)"></div>
+            <div class="inner">
+              <h3>Dependencias</h3>
+              <div class="hint">Verificación automática al iniciar</div>
+              <p>mutagen · colorama · psutil — listas</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="top" style="background:var(--cyan)"></div>
+            <div class="inner">
+              <h3>Actualizaciones</h3>
+              <div class="hint">Validación en vivo desde GitHub</div>
+              <p>Validando updates…</p>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <div style="font-size:8px;color:var(--dim);margin-bottom:6px">Estado del sistema</div>
+          <div class="progress"><i></i></div>
+        </div>
+        <div class="tip" style="text-align:center">Al completar la validación se mostrará una notificación. Pulsa OK para entrar al panel.</div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div id="main" class="screen">
+      <div class="content main-pad main-body">
+        <div style="margin-bottom:14px">
+          <div class="h2">Panel de limpieza</div>
+          <div class="sub" style="margin-top:4px">Selecciona una carpeta y ejecuta la limpieza de nombres y metadatos.</div>
+        </div>
+        <div class="card">
+          <div class="top" style="background:var(--green)"></div>
+          <div class="inner">
+            <h3>Acción principal</h3>
+            <div class="hint">Procesa audio, video e imagen en la carpeta elegida.</div>
+            <div class="cta-row">
+              <button class="btn">Limpiar carpeta</button>
+              <div class="pathbox">
+                <div class="lbl">CARPETA</div>
+                <div class="val">Ninguna seleccionada</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="log">
+          <div class="top"></div>
+          <div class="head">
+            <span>Registro de actividad</span>
+            <span class="live">en vivo</span>
+          </div>
+          <pre>Listo.
+Esperando carpeta…
+El log mostrará cada archivo procesado.</pre>
+        </div>
+        <div class="prog-card">
+          <div class="row"><span>Progreso</span><span>62%</span></div>
+          <div class="prog-bar"><i></i></div>
+          <div class="status">Demo: barra rounded + degradado azul → cyan.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="dot-live"></div>
+      <span>v3.1.5  ·  preview local</span>
+      <span class="right">SMPROJECT115 / remixz</span>
+    </div>
+  </div>
+
+  <script>
+    function show(id, btn) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+  </script>
+</body>
+</html>

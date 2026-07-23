@@ -1,0 +1,17 @@
+RemixZ Cleaner X v3.4.1
+=======================
+
+Diseño: Fluent (igual que antes) + CustomTkinter en botones/entries.
+
+Ejecutar:
+  ejecutar_Cleaner_X.vbs
+  o: pythonw RemixZ_Cleaner_X_App.py
+
+Stack UI:
+  - fluent_ui.py  → layout, cards, splash, progreso, animaciones
+  - customtkinter → botones redondeados / entries (misma paleta)
+  - colorama      → solo motor/consola
+  - easygui       → NO en la UI principal (rompe el diseño)
+
+Deps auto: mutagen, colorama, psutil, customtkinter
+Repo: https://github.com/alikhan847547-sketch/remixz

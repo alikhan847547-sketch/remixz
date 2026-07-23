@@ -1,0 +1,21 @@
+RemixZ Cleaner X — Export v3.1
+================================
+Carpeta export limpia (sin build/__pycache__/EXE).
+
+Ejecutar:
+  doble clic en ejecutar_Cleaner_X.vbs
+
+Requisitos:
+  Windows 10/11 + Python 3.10+ (tkinter)
+
+Contenido principal:
+  RemixZ_Cleaner_X_App.py   — GUI
+  remixz_cleaner_engine.py  — motor
+  remixz_update.py          — updates dual-repo
+  remixz_djtools.py         — DJ Tools (password prueba)
+  fluent_ui.py              — UI
+  version.json              — versión / repos
+
+Repos updates:
+  alikhan847547-sketch/remixz  (principal)
+  SMPROJECT115/remixz          (secundario)
